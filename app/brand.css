@@ -1,0 +1,5 @@
+.brand-logo{display:block;width:100%;aspect-ratio:3/1;overflow:hidden;line-height:0}
+.brand-logo img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}
+.brand .brand-logo{margin:0}
+.auth-logo{max-width:340px;margin:0 auto 18px}
+.footer-logo{width:100px;flex-shrink:0}

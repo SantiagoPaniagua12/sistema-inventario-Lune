@@ -8,7 +8,7 @@ import { execute, seed, limaDate } from '../lib/inventory';
 test('ventas provisionales solo suman productos con conteos válidos',()=>{
   let s=seed();s=execute(s,{type:'open',revision:s.revision,date:limaDate(),period:'Mañana',responsible:'Mostrador',openings:{p1:5,p2:8,p3:4}});
   const summary=salesSummary(s.shifts[0],s.products,{p1:'2',p2:'',p3:'9',p4:'0'});
-  assert.equal(summary.total,3);assert.equal(summary.counted,2);assert.equal(summary.pending,18);
+  assert.equal(summary.total,3);assert.equal(summary.counted,2);assert.equal(summary.pending,19);
   assert.deepEqual(summary.items.map(i=>i.id),['p1']);
 });
 test('el cierre conserva el detalle y ranking de productos vendidos',()=>{

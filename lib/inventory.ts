@@ -16,7 +16,7 @@ export const personKey = (name: string) => name.normalize('NFC').trim().replace(
 export function seed(): State {
   const names = ['Sacher de Tumbo', 'Choux de Maracuya', 'Choux de Café', 'Tartaleta de Limón', 'Vainilla Cacao', 'Tiramisu', 'Tartaleta de Toffe', 'Pastel de Queso Japones', 'Delicia Multifloral', 'Ciudad Blanca', 'Amor Eterno', 'Charlotte de Lucuma', 'Flor Andina', 'Entremet', 'Kaori del Valle', 'Coco Mango', 'Pistacho Rose'];
   const products: Product[] = names.map((name, i) => ({ id: `p${i + 1}`, name, category: 'Postres', yield: 1, minimum: 1 }));
-  products.push(...['Croissant clásico', 'Croissant de chocolate', 'Roll de canela'].map((name, i): Product => ({ id: `v${i + 1}`, name, category: 'Viennoiserie', yield: 1, minimum: 1 })));
+  products.push(...['Croissant clásico', 'Croissant de chocolate', 'Roll de canela', 'Croissant de almendras'].map((name, i): Product => ({ id: `v${i + 1}`, name, category: 'Viennoiserie', yield: 1, minimum: 1 })));
   return { revision: 0, products, lots: [], shifts: [], movements: [], supplies: initialSupplies(), supplyMovements: [] };
 }
 function integer(value: unknown, label: string, min = 0) {

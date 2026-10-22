@@ -26,7 +26,8 @@
     "auth:link": "tsx scripts/auth-setup.ts link",
     "auth:status": "tsx scripts/auth-setup.ts status",
     "auth:test": "tsx scripts/test-auth.ts",
-    "security:check": "tsx scripts/security-check.ts"
+    "security:check": "tsx scripts/security-check.ts",
+    "catalog:almond": "tsx scripts/add-almond-croissant.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",

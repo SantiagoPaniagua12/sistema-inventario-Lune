@@ -18,13 +18,13 @@ test('catálogo confirmado: 38 insumos sin existencias ni mínimos inventados',(
   assert(items.every(i=>i.stock===null&&i.minimum===null));
   assert.equal(items.filter(i=>['Cocina','Limpieza'].includes(i.group)).length,0);
 });
-test('frutas por porciones sin mezclarse con los 20 productos del turno',()=>{
+test('frutas por porciones sin mezclarse con los 21 productos del turno',()=>{
   let s=seed();
   s=run(s,'open',{date:limaDate(),period:'Mañana',responsible:'Atención'});
   s=move(s,'fruta-5','conteo',20);
   s=move(s,'fruta-5','salida',3);
   assert.equal(s.supplies?.find(i=>i.id==='fruta-5')?.stock,17);
-  assert.equal(s.shifts[0].rows.length,20);
+  assert.equal(s.shifts[0].rows.length,21);
   assert.equal(s.shifts[0].rows.reduce((n,r)=>n+r.incoming,0),0);
   assert.throws(()=>move(s,'fruta-5','salida',18),/suficiente/);
   assert.equal(s.supplies?.find(i=>i.id==='fruta-5')?.stock,17);

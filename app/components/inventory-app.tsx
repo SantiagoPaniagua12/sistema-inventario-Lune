@@ -9,6 +9,7 @@ import { StockNotice, StockAlertsPanel } from './stock-alerts';
 import { ExcelImportWorkspace } from './excel-import';
 import { allSalesShifts } from '@/lib/excel-history';
 import { COOKS, WAITERS } from '@/lib/staff';
+import {BrandLogo} from './brand-logo';
 
 type View = 'Turno actual' | 'Reserva congelada' | 'Historial' | 'Productos' | 'Insumos y bebidas' | 'Limpieza' | 'Ventas por turno' | 'Alertas de inventario' | 'Importar Excel';
 type Modal = 'open' | 'produce' | 'replenish' | 'product' | 'createProduct' | 'restore' | null;
@@ -115,7 +116,7 @@ export default function Home({actor}:{actor:Actor}) {
   }, [modal]);
   return <div className="shell">
     <aside className={mobile ? 'sidebar expanded' : 'sidebar'}>
-      <a className="brand" href="/">lune<span>ALTA PASTELERÍA</span></a>
+      <a className="brand" href="/" aria-label="Lune Alta Pastelería · Inicio"><BrandLogo/></a>
       <div className="workspace"><span className="workspace-icon">L</span><div>Lune · Arequipa<small>Gestión de inventario</small></div><span className="beta">BETA</span></div>
       <p className="nav-label">ESPACIO DE TRABAJO</p>
       <nav>{(Object.keys(icons) as View[]).filter(item=>admin||!['Productos','Importar Excel'].includes(item)).map(item => { const Icon = icons[item]; return <button className={view === item ? 'nav-item active' : 'nav-item'} key={item} onClick={() => { setView(item); setMobile(false); setFilter('Todos'); setQuery(''); if (item === 'Historial') setHistoryId(historyShifts.filter(s => s.status === 'closed').at(-1)?.id ?? ''); }}><Icon size={19} />{item}{view === item && <ChevronRight size={15} />}</button>; })}</nav>
@@ -182,7 +183,7 @@ export default function Home({actor}:{actor:Actor}) {
           </section>
         </>}
         </>}
-         <footer className="page-footer"><span className="footer-brand">lune</span><span>Hecho para cuidar cada detalle.</span>{admin && storage === 'json' && <button className="text-button" disabled={!state} onClick={() => show('restore')}>Restaurar respaldo</button>}<span>Inventario · Beta 0.2</span></footer>
+         <footer className="page-footer"><BrandLogo className="footer-logo"/><span>Hecho para cuidar cada detalle.</span>{admin && storage === 'json' && <button className="text-button" disabled={!state} onClick={() => show('restore')}>Restaurar respaldo</button>}<span>Inventario · Beta 0.2</span></footer>
       </div>
     </main>
     {modal && state && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-header"><div><div className="eyebrow">LUNE · INVENTARIO</div><h2 id="modal-title">{modal === 'open' ? 'Abrir un nuevo turno' : modal === 'produce' ? 'Registrar producción' : modal === 'replenish' ? 'Del congelador al mostrador' : modal === 'createProduct' ? 'Añadir producto' : modal === 'restore' ? 'Restaurar respaldo' : 'Editar producto'}</h2></div><button className="icon-button" disabled={busy} onClick={() => setModal(null)} aria-label="Cerrar formulario"><X size={20}/></button></div>

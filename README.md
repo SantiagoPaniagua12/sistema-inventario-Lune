@@ -88,4 +88,6 @@ La actualización `npm run db:units` establece el factor técnico del catálogo 
 Las fotografías proporcionadas están en `public/images`. La sección Productos se muestra sin imágenes. Las fotografías individuales del mostrador y la reserva se asocian solo a los dos postres identificados por el usuario: Pastel de Queso Japonés y Delicia Multifloral. No se asignan nombres por conjetura a los demás postres de la foto.
 ## Acceso con usuarios
 
+El catálogo contiene 21 productos: 17 postres y cuatro productos de viennoiserie, incluido el croissant de almendras para turnos y reserva. Su alta existente en Supabase se realizó con `npm run catalog:almond`, sin cargar existencias ficticias. El comando es idempotente y conserva los cierres anteriores. El logo proporcionado por Lune se usa en el inicio de sesión, el menú y el pie de página.
+
 La beta requiere iniciar sesión. Las cuentas compartidas de Cocina (`cocinalune@gmail.com`) y Salón (`salonlune@gmail.com`) ya están creadas y activas, además de administración. También admiten los accesos cortos `cocina` y `salon`. Sus contraseñas las gestiona Lune. Consulta [la guía de acceso y seguridad](docs/ACCESO-Y-SEGURIDAD.md).

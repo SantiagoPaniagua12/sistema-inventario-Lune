@@ -72,7 +72,7 @@ async function main() {
     if (count.rows[0].n === 0) {
       for (const product of seed().products) await client.query(`INSERT INTO productos (id_categoria,nombre_producto,rendimiento,stock_minimo,activo)
         SELECT id_categoria,$1,$2,$3,true FROM categorias WHERE nombre_categoria=$4`, [product.name, product.yield, product.minimum, product.category]);
-      console.log('Catálogo inicial cargado: 17 postres y 3 productos de viennoiserie, contados por unidades.');
+      console.log('Catálogo inicial cargado: 17 postres y 4 productos de viennoiserie, contados por unidades.');
     } else console.log('Se conserva el catálogo existente. No se reemplazan productos ni datos de operación.');
   });
   console.log('Preparación completada. Configura INVENTORY_STORAGE=postgres en .env.local y reinicia la aplicación.');
