@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { LayoutDashboard, Snowflake, ClipboardList, History, Settings2, Plus, ArrowUpRight, Check, X, ChevronRight, Download, CircleHelp, Croissant, CakeSlice, RefreshCw, Menu, Boxes, SprayCan, BarChart3, Bell, Upload } from 'lucide-react';
-import { available, sales, limaDate, type State } from '@/lib/inventory';
+import { available, sales, limaDate, oldestAvailableLot, type State } from '@/lib/inventory';
 import { SuppliesWorkspace } from './supplies-workspace';
 import { ShiftSalesCard, SalesOverview } from './sales-dashboard';
 import { StockNotice, StockAlertsPanel } from './stock-alerts';
@@ -65,7 +65,7 @@ export default function Home({actor}:{actor:Actor}) {
   useEffect(()=>{setCounts({});setClosingResponsible('');},[active?.id]);
   const products = state?.products.filter(p => (filter === 'Todos' || p.category === filter) && p.name.toLowerCase().includes(query.toLowerCase())) ?? [];
   const chosen = state?.products.find(p => p.id === selected);
-  const lots = state?.lots.filter(l => l.productId === selected && l.quantity > 0).sort((a, b) => a.producedAt.localeCompare(b.producedAt)) ?? [];
+  const oldestLot = oldestAvailableLot(state?.lots ?? [], selected);
   const rows = displayed?.rows ?? [];
   const historicalMovements = state?.movements.filter(m => m.shiftId === historyId).slice(0, 100) ?? [];
   const unassignedMovements = state?.movements.filter(m => !m.shiftId) ?? [];
@@ -145,7 +145,7 @@ export default function Home({actor}:{actor:Actor}) {
           <ShiftSalesCard shift={displayed} products={state.products} counts={counts}/>
           {view === 'Historial' && <label className="history-picker">Consultar turno<select value={historyId} onChange={e => setHistoryId(e.target.value)}><option value="">Selecciona un cierre</option>{historyShifts.filter(s => s.status === 'closed').toReversed().map(s => <option key={s.id} value={s.id}>{s.date} · {s.period} · {s.responsible}</option>)}</select></label>}
           {view==='Historial'&&displayed?.id.startsWith('excel:')&&<p className="alert warning">Archivo histórico de Excel. Solo muestra los postres importados y no modifica el saldo del mostrador ni la reserva actual.</p>}
-          <section className="panel"><div className="panel-heading"><div><h2>Control del mostrador <span className={active && view === 'Turno actual' ? 'pill green' : 'pill'}>{active && view === 'Turno actual' ? 'En curso' : displayed ? 'Cerrado' : 'Sin turno'}</span></h2><p>{displayed ? `${fmt(displayed.date)} · Turno ${displayed.period.toLowerCase()} · Responsable: ${displayed.responsible}` : 'Abre el primer turno e ingresa el conteo inicial del mostrador.'}</p></div>{active && view === 'Turno actual' && waiter && <div className="actions"><button className="primary" onClick={() => show('replenish')}><Plus size={16}/>Retirar de producción</button></div>}</div>
+          <section className="panel"><div className="panel-heading"><div><h2>Control del mostrador <span className={active && view === 'Turno actual' ? 'pill green' : 'pill'}>{active && view === 'Turno actual' ? 'En curso' : displayed ? 'Cerrado' : 'Sin turno'}</span></h2><p>{displayed ? `${fmt(displayed.date)} · Turno ${displayed.period.toLowerCase()} · Responsable: ${displayed.responsible}` : 'Abre el primer turno e ingresa el conteo inicial del mostrador.'}</p></div>{active && view === 'Turno actual' && waiter && <div className="actions"><button className="primary" onClick={() => show('replenish')}><Plus size={16}/>Ingresar al mostrador</button></div>}</div>
           <Toolbar filter={filter} setFilter={setFilter} query={query} setQuery={setQuery}/>
            <div className="table-wrap" role="region" aria-label="Tabla de control del mostrador" tabIndex={0}><table><thead><tr><th scope="col">PRODUCTO</th><th scope="col">ENTRADA</th><th scope="col">INGRESOS</th><th scope="col">STOCK AL CIERRE</th><th scope="col">VENTA CALC.</th>{waiter && <th scope="col">CORRECCIONES</th>}</tr></thead><tbody>{products.map(p => {
             const row = rows.find(r => r.productId === p.id); const input = counts[p.id]; const value = input !== undefined && input !== '' ? Number(input) : null;
@@ -172,7 +172,7 @@ export default function Home({actor}:{actor:Actor}) {
                 <h3>{p.name}</h3><div className="reserve-number">{quantity}<span>unidades disponibles</span></div>
                 <p>{p.category === 'Postres' ? 'Listas para retirar al mostrador' : 'Listas para hornear'}</p>
                 <div className="lot-list">{productLots.length ? productLots.map(l => <div key={l.id}><span>{fmt(l.producedAt)}<small>Lote {l.id.slice(0,8)}{l.responsible ? ` · Cocina: ${l.responsible}` : ''}{l.note ? ` · ${l.note}` : ''}</small></span><strong>{l.quantity}</strong></div>) : <span>No hay lotes disponibles.</span>}</div>
-                <button className="secondary full" disabled={!quantity || !active || !waiter} onClick={() => show('replenish',p.id)}>{p.category === 'Postres' ? 'Retirar de producción' : 'Registrar horneado'}<ArrowUpRight size={16}/></button>
+                <button className="secondary full" disabled={!quantity || !active || !waiter} onClick={() => show('replenish',p.id)}>Ingresar al mostrador<ArrowUpRight size={16}/></button>
               </article>;
             })}</div>
           </section><p className="footnote">{active ? 'Cada retiro se registra en el turno abierto.' : 'Abre un turno para retirar unidades de producción.'}</p>
@@ -187,7 +187,7 @@ export default function Home({actor}:{actor:Actor}) {
          <footer className="page-footer"><BrandLogo className="footer-logo"/><span>Hecho para cuidar cada detalle.</span>{admin && storage === 'json' && <button className="text-button" disabled={!state} onClick={() => show('restore')}>Restaurar respaldo</button>}<span>Inventario · Beta 0.2</span></footer>
       </div>
     </main>
-    {modal && state && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-header"><div><div className="eyebrow">LUNE · INVENTARIO</div><h2 id="modal-title">{modal === 'open' ? 'Abrir un nuevo turno' : modal === 'produce' ? 'Registrar producción' : modal === 'replenish' ? 'Del congelador al mostrador' : modal === 'createProduct' ? 'Añadir producto' : modal === 'restore' ? 'Restaurar respaldo' : 'Editar producto'}</h2></div><button className="icon-button" disabled={busy} onClick={() => setModal(null)} aria-label="Cerrar formulario"><X size={20}/></button></div>
+    {modal && state && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-header"><div><div className="eyebrow">LUNE · INVENTARIO</div><h2 id="modal-title">{modal === 'open' ? 'Abrir un nuevo turno' : modal === 'produce' ? 'Registrar producción' : modal === 'replenish' ? 'Ingresar al mostrador' : modal === 'createProduct' ? 'Añadir producto' : modal === 'restore' ? 'Restaurar respaldo' : 'Editar producto'}</h2></div><button className="icon-button" disabled={busy} onClick={() => setModal(null)} aria-label="Cerrar formulario"><X size={20}/></button></div>
       <form onSubmit={modal === 'restore' ? restoreData : submit} key={`${modal}-${modal === 'product' ? selected : ''}`}>
       {modal === 'restore' ? <><p className="form-note">Importa un archivo JSON exportado por esta aplicación. Se validará antes de reemplazar todos los datos; exporta primero un respaldo del estado actual.</p><label>Archivo de respaldo<input type="file" accept=".json,application/json" required onChange={e => setRestoreFile(e.target.files?.[0] ?? null)}/></label></> : modal === 'open' ? <><div className="form-grid"><label>Fecha<input required name="date" type="date" max={limaDate()} defaultValue={limaDate()}/></label><label>Turno<select name="period" defaultValue={latest?.period === 'Mañana' && latest.date === limaDate() ? 'Tarde' : 'Mañana'}><option>Mañana</option><option>Tarde</option></select></label></div><label>Mozo responsable del turno<select required name="responsible" defaultValue=""><option value="" disabled>Selecciona un mozo</option>{WAITERS.map(name => <option key={name} value={name}>{name}</option>)}</select></label><p className="form-note">Este responsable quedará asociado al área de mostrador. El personal de cocina registra la producción por separado.</p>{latest ? <div className="form-note">La entrada se tomará del cierre de {latest.period.toLowerCase()} del {fmt(latest.date)}. Revisa el conteo antes de continuar.</div> : <><div className="form-note">Primer turno: registra las unidades que ya existen en el mostrador. Puedes dejar en cero los productos sin stock.</div><div className="initial-counts">{state.products.map(p => <label key={p.id}>{p.name}<input type="number" name={`initial:${p.id}`} min="0" max="100000" step="1" defaultValue="0" required/></label>)}</div></>}</> : modal === 'createProduct' ? <>
         <label>Nombre del producto<input name="name" required maxLength={100} placeholder="Nombre del postre"/></label>
@@ -204,15 +204,16 @@ export default function Home({actor}:{actor:Actor}) {
       <label>Producto<select name="productId" value={selected} onChange={e => setSelected(e.target.value)}>{state.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
       {modal === 'produce' && <><div className="form-grid"><label>Cantidad producida (unidades)<input required name="quantity" type="number" min="1" max="100000" step="1" placeholder="Ej. 4"/></label><label>Fecha de producción<input required name="date" type="date" max={limaDate()} defaultValue={limaDate()}/></label></div><label>Cocinero responsable<select required name="responsible" defaultValue=""><option value="" disabled>Selecciona un cocinero</option>{COOKS.map(name => <option key={name} value={name}>{name}</option>)}</select></label><label>Nota del lote (opcional)<input name="note" maxLength={180} placeholder="Referencia del táper o ubicación"/></label><p className="form-note">Registra al cocinero que preparó el lote. Su nombre quedará guardado como responsable de esta producción. La producción queda en reserva hasta registrar el retiro.</p></>}
       {modal === 'replenish' && <>
-        <label>Mozo que ingresa los postres al mostrador<select name="responsible" required defaultValue=""><option value="" disabled>Selecciona tu nombre</option>{WAITERS.map(name=><option key={name}>{name}</option>)}</select></label>
-        <label>Lote de origen<select name="lotId" required key={selected}><option value="">Selecciona un lote</option>{lots.map(l => <option key={l.id} value={l.id}>{l.producedAt} · {l.quantity} unidades disponibles · {l.id.slice(0,8)}</option>)}</select></label>
-        {!lots.length && <p className="invalid-text">No hay unidades disponibles. Registra la producción primero.</p>}
-        <label>Unidades retiradas de producción<input required name="quantity" type="number" min="1" max="100000" step="1" placeholder="Ej. 5"/></label>
-        <p className="form-note">Si retiras 5 unidades de producción, ingresan 5 unidades al mostrador del turno actual.</p>
+        <label>Mozo que ingresa los productos al mostrador<select name="responsible" required defaultValue=""><option value="" disabled>Selecciona tu nombre</option>{WAITERS.map(name=><option key={name}>{name}</option>)}</select></label>
+        <label>Lote de origen · selección automática<input readOnly value={oldestLot ? `${fmt(oldestLot.producedAt)} · ${oldestLot.quantity} unidades disponibles · ${oldestLot.id.slice(0,8)}` : 'Sin lotes disponibles'}/></label>
+        <input type="hidden" name="lotId" value={oldestLot?.id ?? ''}/>
+        {!oldestLot && <p className="invalid-text">No hay unidades disponibles. Registra la producción primero.</p>}
+        <label>Unidades a ingresar al mostrador<input required name="quantity" type="number" min="1" max={oldestLot?.quantity ?? 0} step="1" placeholder="Ej. 5"/></label>
+        <p className="form-note">Se usa primero el lote más antiguo con stock y no se puede cambiar. Cuando se agote, se seleccionará el siguiente. Para usar varios lotes, registra primero las unidades del lote seleccionado y luego realiza otro ingreso.</p>
       </>}
       </>}
       {error && <div role="alert" className="alert error">{error}</div>}
-      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={() => setModal(null)}>Cancelar</button><button className="primary" type="submit" disabled={busy || (modal === 'replenish' && !lots.length) || (modal === 'restore' && !restoreFile)}>{busy ? 'Guardando…' : modal === 'open' ? 'Abrir turno' : modal === 'restore' ? 'Restaurar datos' : modal === 'createProduct' ? 'Añadir producto' : 'Guardar registro'}<Check size={16}/></button></div>
+      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={() => setModal(null)}>Cancelar</button><button className="primary" type="submit" disabled={busy || (modal === 'replenish' && !oldestLot) || (modal === 'restore' && !restoreFile)}>{busy ? 'Guardando…' : modal === 'open' ? 'Abrir turno' : modal === 'restore' ? 'Restaurar datos' : modal === 'createProduct' ? 'Añadir producto' : 'Guardar registro'}<Check size={16}/></button></div>
       </form>
     </section></div>}
   </div>;

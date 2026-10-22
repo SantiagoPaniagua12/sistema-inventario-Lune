@@ -129,7 +129,9 @@ async function main() {
     assert.equal((await isolated.query('SELECT count(*)::int AS n FROM auditoria_acceso')).rows[0].n,1);
     await assert.rejects(()=>mutatePostgres({type:'product',revision:s.revision,productId:postre,name:'Intrusión',minimum:1},cookActor),/permiso/);
     await assert.rejects(()=>mutatePostgres({type:'produce',revision:s.revision,quantity:1,responsible:'Joel'},{id:waiterId,name:'Salón',role:'mozo',mustChangePassword:false}),/permiso/);
-    s=await mutatePostgres({type:'replenish',revision:s.revision,productId:postre,lotId:s.lots.at(-1)!.id,quantity:1,responsible:'Karla'},{id:waiterId,name:'Salón',role:'mozo',mustChangePassword:false});
+    await assert.rejects(()=>mutatePostgres({type:'replenish',revision:s.revision,productId:postre,lotId:s.lots.at(-1)!.id,quantity:1,responsible:'Karla'},{id:waiterId,name:'Salón',role:'mozo',mustChangePassword:false}),/más antiguo/);
+    assert.deepEqual(await getPostgresState(),s);
+    s=await mutatePostgres({type:'replenish',revision:s.revision,productId:postre,lotId:lote,quantity:1,responsible:'Karla'},{id:waiterId,name:'Salón',role:'mozo',mustChangePassword:false});
     assert.equal(s.movements[0].responsible,'Karla');
     assert.equal(s.shifts.at(-1)!.responsible,'Otro responsable');
     const audit=(await isolated.query('SELECT detalle FROM auditoria_acceso ORDER BY id DESC')).rows;

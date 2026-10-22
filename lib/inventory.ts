@@ -12,6 +12,8 @@ export const limaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Amer
 const uid = () => crypto.randomUUID();
 export const available = (r: Row) => r.opening + r.incoming - r.waste;
 export const sales = (r: Row) => r.closing === null ? null : available(r) - r.closing;
+// Array order breaks ties by registration order (PostgreSQL reads lots by id).
+export const oldestAvailableLot = (lots: Lot[], productId: string) => lots.filter(l => l.productId === productId && l.quantity > 0).sort((a,b) => a.producedAt.localeCompare(b.producedAt))[0];
 export const personKey = (name: string) => name.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('es-PE');
 export function seed(): State {
   const names = ['Sacher de Tumbo', 'Choux de Maracuya', 'Choux de Café', 'Tartaleta de Limón', 'Vainilla Cacao', 'Tiramisu', 'Tartaleta de Toffe', 'Pastel de Queso Japones', 'Delicia Multifloral', 'Ciudad Blanca', 'Amor Eterno', 'Charlotte de Lucuma', 'Flor Andina', 'Entremet', 'Kaori del Valle', 'Coco Mango', 'Pistacho Rose'];
@@ -61,6 +63,7 @@ export function execute(original: State, c: Command): State {
     const quantity = integer(c.quantity, 'Unidades congeladas', 1);
     if (c.output !== undefined && c.output !== quantity) throw new Error('Ahora se cuenta por unidades: la cantidad que ingresa al mostrador debe ser igual a la retirada de producción.');
     const lot = s.lots.find(l => l.id === c.lotId && l.productId === product.id);
+    if (lot && lot.id !== oldestAvailableLot(s.lots, product.id)?.id) throw new Error('Debes ingresar primero el lote más antiguo con stock de este producto.');
     if (!lot || lot.quantity < quantity) throw new Error('El lote no tiene suficiente stock congelado.');
     lot.quantity -= quantity;
     active.rows.find(r => r.productId === product.id)!.incoming += quantity;

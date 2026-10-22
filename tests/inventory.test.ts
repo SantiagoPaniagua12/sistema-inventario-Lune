@@ -1,10 +1,34 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execute, seed, sales, limaDate, type State } from '../lib/inventory';
+import { execute, seed, sales, limaDate, oldestAvailableLot, type State } from '../lib/inventory';
 import { validateBackup } from '../lib/backup';
 const date = limaDate();
 function run(s: State, type: string, data: Record<string, unknown> = {}) { return execute(s, { type, revision: s.revision, ...data }); }
 function open() { return run(seed(), 'open', { date, period: 'Mañana', responsible: 'Ana', openings: { p1: 5 } }); }
+
+test('ingreso usa el lote más antiguo con stock, desempata por registro y avanza al agotarlo',()=>{
+  for(const productId of ['p1','v1']){
+    let s=open();
+    const yesterday=new Date(Date.parse(`${date}T12:00:00Z`)-86400000).toISOString().slice(0,10);
+    s=run(s,'produce',{productId,quantity:5,responsible:'Joel',date});
+    const newer=s.lots[0].id;
+    s=run(s,'produce',{productId,quantity:2,responsible:'Joel',date:yesterday});
+    const oldest=s.lots[1].id;
+    s=run(s,'produce',{productId,quantity:1,responsible:'Joel',date:yesterday});
+    const tied=s.lots[2].id;
+    assert.equal(oldestAvailableLot(s.lots,productId)?.id,oldest);
+    assert.throws(()=>run(s,'replenish',{productId,lotId:newer,quantity:1}),/más antiguo/);
+    assert.throws(()=>run(s,'replenish',{productId,lotId:tied,quantity:1}),/más antiguo/);
+    assert.throws(()=>run(s,'replenish',{productId,lotId:oldest,quantity:3}),/suficiente stock/);
+    s=run(s,'replenish',{productId,lotId:oldest,quantity:2});
+    assert.equal(oldestAvailableLot(s.lots,productId)?.id,tied);
+    s=run(s,'replenish',{productId,lotId:tied,quantity:1});
+    assert.equal(oldestAvailableLot(s.lots,productId)?.id,newer);
+    s=run(s,'replenish',{productId,lotId:newer,quantity:5});
+    assert.equal(oldestAvailableLot(s.lots,productId),undefined);
+    assert.equal(s.shifts[0].rows.find(r=>r.productId===productId)!.incoming,8);
+  }
+});
 
 test('correcciones conservan reserva, trazabilidad, cierres y entrada del siguiente turno',()=>{
   let s=run(open(),'produce',{productId:'p1',quantity:20,responsible:'Joel',date});
