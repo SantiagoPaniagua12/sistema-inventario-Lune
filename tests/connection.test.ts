@@ -12,13 +12,22 @@ const uri='postgresql://usuario:solo-prueba@db.example:5432/postgres';
 test('el certificado CA se configura sin desactivar la verificación TLS',async()=>{
   const pem=rootCertificates.find(pem=>{const certificate=new X509Certificate(pem);return certificate.ca&&Date.parse(certificate.validTo)>Date.now();})!;
   assert(pem);
-  const ssl=connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA:pem.replace(/\n/g,'\\n')},'supabase').ssl;
-  assert.deepEqual(ssl,{rejectUnauthorized:true,ca:pem});
+  const ssl=connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA:pem.replace(/\n/g,'\\n')},'supabase').ssl as {rejectUnauthorized:boolean;ca:string};
+  assert.equal(ssl.rejectUnauthorized,true);
+  assert.equal(new X509Certificate(ssl.ca).fingerprint256,new X509Certificate(pem).fingerprint256);
+  for(const pasted of [pem.replace(/\r?\n/g,''),pem.replace(/\r?\n/g,' '),JSON.stringify(pem),pem.replace(/\r?\n/g,'\\r\\n')]){
+    const restored=connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA:pasted},'supabase').ssl as {rejectUnauthorized:boolean;ca:string};
+    assert.equal(restored.rejectUnauthorized,true);
+    assert.equal(new X509Certificate(restored.ca).fingerprint256,new X509Certificate(pem).fingerprint256);
+  }
+  assert.throws(()=>connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA:pem.replace(/[A-Za-z0-9+/]{30}/,'!contenido-corrupto!')},'supabase'),/certificado CA/);
   assert.throws(()=>connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA:'certificado incorrecto'},'supabase'),/certificado CA/);
   const directory=await mkdtemp(path.join(tmpdir(),'lune-cert-'));
   try{
     const filename=path.join(directory,'ca.crt');await writeFile(filename,pem);
-    assert.deepEqual(connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA_FILE:filename},'supabase').ssl,{rejectUnauthorized:true,ca:pem});
+    const fileSsl=connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA_FILE:filename},'supabase').ssl as {rejectUnauthorized:boolean;ca:string};
+    assert.equal(fileSsl.rejectUnauthorized,true);
+    assert.equal(new X509Certificate(fileSsl.ca).fingerprint256,new X509Certificate(pem).fingerprint256);
     assert.throws(()=>connectionConfig({SUPABASE_DATABASE_URL:uri,SUPABASE_SSL_CA_FILE:path.join(directory,'missing.crt')},'supabase'),/No se puede leer/);
   }finally{
     const resolved=path.resolve(directory);
