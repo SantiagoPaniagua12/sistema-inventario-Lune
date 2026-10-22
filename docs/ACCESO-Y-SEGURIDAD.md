@@ -10,7 +10,7 @@ Abre http://127.0.0.1:3000/. Hay dos cuentas de trabajo compartidas y una admini
 - Salón: `salonlune@gmail.com`, acceso corto `salon` (también admite `salón` y `mozos`).
 - Administración: `lunealtapasteleria@gmail.com`, con su correo y contraseña propios.
 
-**Las dos cuentas de área todavía no se han creado, por indicación del usuario.** Sus correos ya están rellenados en **Equipo y permisos**. Cuando corresponda, administración elegirá una contraseña de 12 a 128 caracteres para cada área y creará las cuentas desde allí. No se generan contraseñas predeterminadas ni se envían invitaciones o mensajes.
+**Las dos cuentas de área ya están creadas y activas, además de administración.** Administración eligió sus contraseñas privadas desde **Equipo y permisos**. No se generan contraseñas predeterminadas ni se envían invitaciones o mensajes.
 
 La cuenta de Cocina permite seleccionar a Alex, Rosmery o Joel al registrar producción. La cuenta de Salón permite seleccionar a Shalu, Karla, Nicol, Emilia, Mapi, Diogo o Santiago al abrir un turno, ingresar postres al mostrador y cerrar. Una reposición conserva a su propio mozo responsable aunque otro haya abierto el turno. Los insumos también permiten seleccionar a alguien del área correspondiente.
 
@@ -75,7 +75,13 @@ Las pruebas unitarias cubren permisos, nombres permitidos por área, accesos cor
 
 La revisión reduce riesgos conocidos; no equivale a garantizar que nunca habrá una intrusión ni a una auditoría externa. Antes de publicar deben configurarse el origen HTTPS definitivo, las variables privadas en el hosting y los respaldos según el plan de Supabase. No desplegar `.env.local`, respaldos de `data/` ni conexiones administrativas. Si una clave se comparte accidentalmente, hay que rotarla. Mantener dependencias y parches actualizados.
 
-La comprobación de seguridad confirmó 20 productos, 38 insumos sin conteo inicial y cero lotes, turnos, movimientos o importaciones inventadas. Solo existe el perfil administrador real; la creación de las cuentas compartidas queda pendiente. Auth, sus sesiones y la revocación se probaron antes del cambio a cuentas de área. Para este cambio se verifican permisos y responsables con pruebas unitarias y PostgreSQL local, sin crear cuentas operativas en Supabase. El alta pública quedó desactivada. El control de intentos también se prueba con solicitudes concurrentes en la base local.
+La comprobación de seguridad confirmó 20 productos, 38 insumos sin conteo inicial y cero lotes, turnos, movimientos o importaciones inventadas. Existen tres perfiles activos: administración, Cocina y Salón. Auth, sus sesiones y la revocación se probaron antes del cambio a cuentas de área. Para este cambio se verifican permisos y responsables con pruebas unitarias y PostgreSQL local. El alta pública quedó desactivada. El control de intentos también se prueba con solicitudes concurrentes en la base local.
+
+## Diagnóstico de acceso en Netlify
+
+Un fallo de conexión previo a validar la contraseña no implica que las cuentas o sus contraseñas sean incorrectas. Las respuestas distinguen problemas de URL, certificado, red y permisos mediante códigos seguros; los registros no imprimen errores SQL completos ni credenciales.
+
+El 22 de octubre se detectó `DB_CA_INVALID` por el formato de `SUPABASE_SSL_CA` pegado en Netlify. La lectura ahora admite PEM con saltos reales, escapados o reemplazados por espacios, y en una sola línea. Solo reconstruye el formato: conserva la identidad criptográfica del certificado, exige una CA válida y mantiene `rejectUnauthorized=true`. Las pruebas verifican la misma huella SHA-256 y rechazan contenido corrupto. Tras el despliegue, el formulario público volvió a acceder a la base de datos.
 
 Antes del despliegue conviene fijar también la longitud mínima de contraseña a 12 en Supabase Auth, para aplicar el mismo requisito incluso a clientes ajenos a esta interfaz. El doble factor del panel de Supabase, la recuperación de cuentas y los respaldos deben quedar bajo control del propietario del proyecto. La beta no incluye todavía un flujo de doble factor dentro de la aplicación ni recuperación de contraseña por correo.
 

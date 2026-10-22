@@ -88,4 +88,4 @@ La actualización `npm run db:units` establece el factor técnico del catálogo 
 Las fotografías proporcionadas están en `public/images`. La sección Productos se muestra sin imágenes. Las fotografías individuales del mostrador y la reserva se asocian solo a los dos postres identificados por el usuario: Pastel de Queso Japonés y Delicia Multifloral. No se asignan nombres por conjetura a los demás postres de la foto.
 ## Acceso con usuarios
 
-La beta requiere iniciar sesión. Administración puede crear las dos cuentas de trabajo desde **Equipo y permisos**: Cocina (`cocinalune@gmail.com`) y Salón (`salonlune@gmail.com`). También admiten los accesos cortos `cocina` y `salon`. Su creación se dejó pendiente por indicación del usuario; los formularios están preparados. Consulta [la guía de acceso y seguridad](docs/ACCESO-Y-SEGURIDAD.md).
+La beta requiere iniciar sesión. Las cuentas compartidas de Cocina (`cocinalune@gmail.com`) y Salón (`salonlune@gmail.com`) ya están creadas y activas, además de administración. También admiten los accesos cortos `cocina` y `salon`. Sus contraseñas las gestiona Lune. Consulta [la guía de acceso y seguridad](docs/ACCESO-Y-SEGURIDAD.md).
