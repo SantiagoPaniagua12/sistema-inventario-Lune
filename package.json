@@ -1,0 +1,54 @@
+{
+  "name": "lune-inventario-beta",
+  "version": "0.2.0",
+  "private": true,
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/inventory.test.ts tests/request-origin.test.ts tests/supplies.test.ts tests/reports.test.ts tests/excel-alerts.test.ts tests/connection.test.ts tests/access.test.ts",
+    "db:features": "tsx scripts/database.ts features",
+    "db:check": "tsx scripts/database.ts check",
+    "db:setup": "tsx scripts/database.ts setup",
+    "db:test": "tsx scripts/test-postgres.ts",
+    "db:units": "tsx scripts/database.ts units",
+    "db:beta2": "tsx scripts/database.ts beta2",
+    "supabase:check": "tsx scripts/supabase.ts check",
+    "supabase:preflight": "tsx scripts/supabase-preflight.ts",
+    "supabase:dry-run": "tsx scripts/supabase-dry-run.ts",
+    "supabase:migrate": "tsx scripts/supabase.ts migrate",
+    "auth:schema": "tsx scripts/auth-setup.ts schema",
+    "auth:bootstrap": "tsx scripts/auth-setup.ts bootstrap",
+    "auth:link": "tsx scripts/auth-setup.ts link",
+    "auth:status": "tsx scripts/auth-setup.ts status",
+    "auth:test": "tsx scripts/test-auth.ts",
+    "security:check": "tsx scripts/security-check.ts"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.109.0",
+    "exceljs": "^4.4.0",
+    "lucide-react": "^0.468.0",
+    "next": "^16.0.0",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.16.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "ws": "^8.22.0",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.2",
+    "@types/yauzl": "^3.4.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,89 @@
+import { available, type State, type Product, type Shift } from './inventory';
+import { validateSupplyBackup } from './supplies';
+import { validateExcelBackup, excelConflicts } from './excel-history';
+
+/** Validate an untrusted backup before it can replace the local inventory. */
+export function validateBackup(value: unknown): State {
+  const fail = (): never => { throw new Error('El respaldo no tiene una estructura de inventario válida.'); };
+  const record = (v: unknown): Record<string, unknown> =>
+    v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : fail();
+  const list = (v: unknown, max: number): unknown[] => Array.isArray(v) && v.length <= max ? v : fail();
+  const text = (v: unknown, max = 500): string => typeof v === 'string' && v.length <= max ? v : fail();
+  const id = (v: unknown): string => { const s = text(v, 100); return s.trim() ? s : fail(); };
+  const name = (v: unknown): string => { const s = text(v, 180); return s.trim() ? s : fail(); };
+  const number = (v: unknown, min = 0): number =>
+    typeof v === 'number' && Number.isSafeInteger(v) && v >= min && v <= 100000 ? v : fail();
+  const date = (v: unknown): string => {
+    const s = text(v, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s ? s : fail();
+  };
+  const timestamp = (v: unknown): string => {
+    const s = text(v, 40);
+    return !Number.isNaN(Date.parse(s)) && /^\d{4}-\d{2}-\d{2}T/.test(s) ? s : fail();
+  };
+  const unique = (ids: string[]) => { if (new Set(ids).size !== ids.length) fail(); };
+
+  const root = record(value);
+  number(root.revision);
+  const products = list(root.products, 1000).map(value => {
+    const p = record(value);
+    const category = p.category as Product['category'];
+    if (category !== 'Postres' && category !== 'Viennoiserie') fail();
+    const yieldValue = number(p.yield, 1);
+    if (category === 'Viennoiserie' && yieldValue !== 1) fail();
+    return { id: id(p.id), name: name(p.name), category, yield: yieldValue, minimum: number(p.minimum), ...(p.reserveMinimum === undefined ? {} : { reserveMinimum:p.reserveMinimum === null ? null : number(p.reserveMinimum) }) };
+  });
+  if (!products.length) fail();
+  unique(products.map(p => p.id));
+  const names = products.map(p => p.name.toLocaleLowerCase('es-PE'));
+  unique(names);
+  const productIds = new Set(products.map(p => p.id));
+  const lots = list(root.lots, 10000).map(value => {
+    const l = record(value);
+    const productId = id(l.productId);
+    if (!productIds.has(productId)) fail();
+    return { id: id(l.id), productId, quantity: number(l.quantity), producedAt: date(l.producedAt), note: text(l.note, 180), ...(l.yield === undefined ? {} : { yield: number(l.yield, 1) }), ...(l.responsible === undefined ? {} : { responsible: name(l.responsible) }) };
+  });
+  unique(lots.map(l => l.id));
+  const shifts = list(root.shifts, 10000).map(value => {
+    const s = record(value);
+    if (s.period !== 'Mañana' && s.period !== 'Tarde') fail();
+    if (s.status !== 'open' && s.status !== 'closed') fail();
+    const rows = list(s.rows, products.length).map(value => {
+      const r = record(value);
+      const productId = id(r.productId);
+      if (!productIds.has(productId)) fail();
+      const row = { productId, opening: number(r.opening), incoming: number(r.incoming), waste: number(r.waste), closing: r.closing === null ? null : number(r.closing) };
+      if (available(row) < 0 || (row.closing !== null && row.closing > available(row))) fail();
+      return row;
+    });
+    unique(rows.map(r => r.productId));
+    if (s.status === 'closed' && rows.some(r => r.closing === null)) fail();
+    if (s.status === 'open' && (rows.length !== products.length || rows.some(r => r.closing !== null))) fail();
+    const shift: Shift = { id: id(s.id), date: date(s.date), period: s.period as Shift['period'], responsible: name(s.responsible), status: s.status as Shift['status'], rows,
+      ...(s.openedAt === undefined ? {} : { openedAt: timestamp(s.openedAt) }),
+      ...(s.closedAt === undefined ? {} : { closedAt: timestamp(s.closedAt) }) };
+    if (shift.status === 'closed' && !shift.closedAt) fail();
+    return shift;
+  });
+  unique(shifts.map(s => s.id));
+  if (shifts.slice(0, -1).some(s => s.status === 'open')) fail();
+  const shiftIds = new Set(shifts.map(s => s.id));
+  const movements = list(root.movements, 20000).map(value => {
+    const m = record(value);
+    const productId = id(m.productId);
+    if (!productIds.has(productId)) fail();
+    const shiftId = m.shiftId === undefined ? undefined : id(m.shiftId);
+    if (shiftId && !shiftIds.has(shiftId)) fail();
+    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, 1), note: text(m.note), responsible: name(m.responsible), ...(shiftId ? { shiftId } : {}) };
+  });
+  unique(movements.map(m => m.id));
+  const extra = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);
+  const state: State = { revision: number(root.revision), products, lots, shifts, movements, ...extra };
+  if (root.excelImports !== undefined) {
+    const batches = validateExcelBackup(root.excelImports, products);
+    if (excelConflicts(state,batches.flatMap(batch=>batch.records)).length) fail();
+    state.excelImports=batches;
+  }
+  return state;
+}
