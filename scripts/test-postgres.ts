@@ -68,6 +68,20 @@ async function main() {
       FROM movimiento_inventario WHERE id_producto=$1 AND unidad='pieza'
       AND id_ubicacion IN (SELECT id_ubicacion FROM ubicaciones WHERE tipo='mostrador')`, [postre]);
     assert.equal(balance.rows[0].n, 4);
+    // Corrige un cierre con siguiente turno abierto y compensa ambos saldos sin borrar asientos.
+    const correctedShift=s.shifts[0].id;
+    await mutate('correctShift',{shiftId:correctedShift,productId:postre,lotId:lote,incoming:10,closing:3,responsible:'Responsable de prueba',reason:'Error de digitación de prueba'});
+    assert.equal(s.lots[0].quantity,10);
+    assert.equal(s.shifts[0].rows[0].incoming,10);
+    assert.equal(s.shifts[1].rows[0].opening,3);
+    await mutate('correctShift',{shiftId:correctedShift,productId:postre,incoming:10,closing:4,responsible:'Responsable de prueba',reason:'Corrección solo de cierre'});
+    assert.equal(s.movements[0].type,'Corrección de cierre');
+    await mutate('correctShift',{shiftId:correctedShift,productId:postre,lotId:lote,incoming:12,closing:4,responsible:'Responsable de prueba',reason:'Restablecer saldo para el resto de pruebas'});
+    assert.equal(s.lots[0].quantity,8);
+    assert.equal(s.shifts[1].rows[0].opening,4);
+    const correctedBalance=await isolated.query("SELECT SUM(CASE WHEN sentido='entrada' THEN cantidad ELSE -cantidad END)::int AS n FROM movimiento_inventario WHERE id_producto=$1 AND id_ubicacion IN (SELECT id_ubicacion FROM ubicaciones WHERE tipo='mostrador')",[postre]);
+    assert.equal(correctedBalance.rows[0].n,4);
+    assert.deepEqual(validateBackup(s),s);
     // Una escritura desactualizada y una salida inválida no deben cambiar nada.
     const saved: State = structuredClone(s);
     await assert.rejects(() => mutatePostgres({ type: 'replenish', lotId: lote, revision: s.revision - 1, productId: postre, quantity: 1, note: 'No guardar' }), /datos cambiaron/);
@@ -84,6 +98,8 @@ async function main() {
       CHECK (NOT (tipo='reposicion' AND sentido='entrada' AND cantidad=7))`);
     const beforeFailure = structuredClone(s);
     await assert.rejects(() => mutatePostgres({ type: 'replenish', revision: s.revision, productId: postre, lotId: lote, quantity: 7 }), /restricciones/);
+    assert.deepEqual(await getPostgresState(), beforeFailure);
+    await assert.rejects(() => mutatePostgres({type:'correctShift',revision:s.revision,shiftId:s.shifts.at(-1)!.id,productId:postre,lotId:lote,incoming:8,responsible:'Responsable de prueba',reason:'Rollback del segundo asiento'}),/restricciones/);
     assert.deepEqual(await getPostgresState(), beforeFailure);
     await mutate('supplyMove', { supplyId: 'cajas-pequenas', action: 'conteo', quantity: 0, responsible: 'Bodega' });
     await mutate('supplyMove', { supplyId: 'cajas-pequenas', action: 'entrada', quantity: 2, byPack: true, responsible: 'Bodega' });

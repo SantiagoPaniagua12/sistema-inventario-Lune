@@ -5,7 +5,7 @@ export type Product = { id: string; name: string; category: 'Postres' | 'Viennoi
 export type Lot = { id: string; productId: string; quantity: number; producedAt: string; note: string; yield?: number; responsible?: string };
 export type Row = { productId: string; opening: number; incoming: number; waste: number; closing: number | null };
 export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
-export type Movement = { id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; shiftId?: string };
+export type Movement = { id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; shiftId?: string; lotId?: string };
 export type State = { revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[] };
 export type Command = { type: string; revision: number; [key: string]: unknown };
 export const limaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -65,6 +65,36 @@ export function execute(original: State, c: Command): State {
     lot.quantity -= quantity;
     active.rows.find(r => r.productId === product.id)!.incoming += quantity;
     log(product.category === 'Postres' ? 'Retiro de producción' : 'Horneado', quantity, `${quantity} unidades retiradas de producción del lote ${lot.id.slice(0, 8)} e ingresadas al mostrador.`, required(c.responsible ?? active.responsible,'Mozo responsable'));
+    s.movements[0].lotId = lot.id;
+  } else if (c.type === 'correctShift') {
+    const index = s.shifts.findIndex(shift => shift.id === c.shiftId);
+    const shift = s.shifts[index];
+    if (!shift || !product) throw new Error('Selecciona un turno y producto válidos.');
+    if (s.shifts.slice(index + 1).some(next => next.status === 'closed')) throw new Error('Solo puedes corregir el turno abierto o el último cierre.');
+    const row = shift.rows.find(r => r.productId === product.id);
+    if (!row) throw new Error('El producto no pertenece a este turno.');
+    const responsible = required(c.responsible, 'Mozo responsable');
+    const reason = required(c.reason, 'Motivo de la corrección');
+    const incoming = integer(c.incoming, 'Ingreso corregido');
+    const closing = shift.status === 'closed' ? integer(c.closing, 'Cierre corregido') : null;
+    const delta = incoming - row.incoming;
+    if (!delta && closing === row.closing) throw new Error('No hay cambios para guardar.');
+    if (row.opening + incoming - row.waste < 0 || row.opening + incoming - row.waste > 100000 || (closing !== null && closing > row.opening + incoming - row.waste)) throw new Error('El cierre no puede superar el stock disponible ni producir ventas negativas.');
+    const note = `Corrección: ingreso ${row.incoming} → ${incoming}; cierre ${row.closing ?? 'pendiente'} → ${closing ?? 'pendiente'}. Motivo: ${reason}`;
+    if (delta) {
+      const lot = s.lots.find(l => l.id === c.lotId && l.productId === product.id);
+      if (!lot || lot.quantity - delta < 0 || lot.quantity - delta > 100000) throw new Error('Selecciona un lote con stock suficiente.');
+      const withdrawn = s.movements.filter(m => m.shiftId === shift.id && m.productId === product.id && m.lotId === lot.id && ['Retiro de producción','Horneado','Corrección de ingreso'].includes(m.type)).reduce((sum,m) => sum + m.quantity, 0);
+      if (delta < 0 && -delta > withdrawn) throw new Error('No puedes devolver al lote más unidades de las retiradas en este turno.');
+      lot.quantity -= delta;
+    }
+    row.incoming = incoming; row.closing = closing;
+    const nextRow = s.shifts[index + 1]?.rows.find(r => r.productId === product.id);
+    if (nextRow && closing !== null) {
+      if (closing + nextRow.incoming - nextRow.waste > 100000) throw new Error('La entrada corregida supera el límite del siguiente turno.');
+      nextRow.opening = closing;
+    }
+    s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,type:delta ? 'Corrección de ingreso' : 'Corrección de cierre',quantity:delta,note,responsible,shiftId:shift.id,...(delta ? {lotId:String(c.lotId)} : {})});
   } else if (c.type === 'close') {
     if (!active) throw new Error('No hay un turno abierto.');
     const counts = c.counts as Record<string, unknown> | undefined;

@@ -8,11 +8,13 @@ import {loginArea} from '../lib/area-accounts';
 const actor=(role:Actor['role'],name=role==='cocina'?'Cocina':'Salón'):Actor=>({id:'id',name,role,mustChangePassword:false});
 const command=(type:string,extra:Record<string,unknown>={}):Command=>({type,revision:0,...extra});
 test('cocina no puede abrir turnos, cambiar catálogos, importar ni restaurar',()=>{
-  for(const type of ['open','replenish','close','product','createProduct','excelImport','restore','supplyCreate','supplyUpdate','unknown']) assert.throws(()=>authorizeCommand(actor('cocina'),command(type),seed()),AccessError);
+  for(const type of ['open','replenish','close','correctShift','product','createProduct','excelImport','restore','supplyCreate','supplyUpdate','unknown']) assert.throws(()=>authorizeCommand(actor('cocina'),command(type),seed()),AccessError);
   assert.equal(authorizeCommand(actor('cocina'),command('produce',{responsible:'Joel'}),seed()).responsible,'Joel');
   for(const responsible of [undefined,'Salón','Karla','Intruso'])assert.throws(()=>authorizeCommand(actor('cocina'),command('produce',{responsible}),seed()),AccessError);
 });
 test('salón no puede producir ni modificar catálogos y selecciona un mozo válido',()=>{
+  assert.equal(authorizeCommand(actor('mozo'),command('correctShift',{responsible:'Karla'}),seed()).responsible,'Karla');
+  assert.throws(()=>authorizeCommand(actor('mozo'),command('correctShift',{responsible:'Alex'}),seed()),AccessError);
   for(const type of ['produce','product','createProduct','excelImport','restore','supplyCreate','supplyUpdate']) assert.throws(()=>authorizeCommand(actor('mozo'),command(type),seed()),AccessError);
   assert.equal(authorizeCommand(actor('mozo'),command('open',{responsible:'Shalu'}),seed()).responsible,'Shalu');
   assert.throws(()=>authorizeCommand(actor('mozo'),command('open',{responsible:'Alex'}),seed()),AccessError);

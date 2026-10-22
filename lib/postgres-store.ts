@@ -19,7 +19,7 @@ async function readPg(client: PoolClient): Promise<State> {
     WHERE m.id_lote=l.id_lote AND u.tipo='congelador'),0)::int AS cantidad FROM lotes l JOIN usuarios a ON a.id_usuario=l.creado_por ORDER BY l.id_lote`);
   const shifts = await client.query(`SELECT t.id_turno,t.fecha::text,t.periodo,t.estado,t.abierto_en,t.cerrado_en,u.nombre_usuario FROM turnos t JOIN usuarios u ON u.id_usuario=t.id_responsable ORDER BY t.fecha, CASE t.periodo WHEN 'manana' THEN 0 ELSE 1 END`);
   const details = await client.query(`SELECT d.*,
-    COALESCE(SUM(m.cantidad) FILTER (WHERE m.sentido='entrada' AND m.tipo IN ('reposicion','horneado')),0)::int AS ingresos,
+    COALESCE(SUM(CASE WHEN m.sentido='entrada' THEN m.cantidad ELSE -m.cantidad END) FILTER (WHERE m.tipo IN ('reposicion','horneado')),0)::int AS ingresos,
     COALESCE(SUM(m.cantidad) FILTER (WHERE m.sentido='salida' AND m.tipo='merma'),0)::int AS mermas
     FROM detalle_turno d LEFT JOIN movimiento_inventario m ON m.id_turno=d.id_turno AND m.id_producto=d.id_producto
       AND m.id_ubicacion IN (SELECT id_ubicacion FROM ubicaciones WHERE tipo='mostrador')
@@ -27,7 +27,8 @@ async function readPg(client: PoolClient): Promise<State> {
   const movements = await client.query(`SELECT m.*, u.nombre_usuario FROM movimiento_inventario m
     JOIN usuarios u USING (id_usuario) JOIN ubicaciones b USING (id_ubicacion)
     WHERE (m.tipo='produccion' AND m.sentido='entrada' AND b.tipo='congelador')
-    OR (m.tipo IN ('reposicion','horneado') AND m.sentido='entrada' AND b.tipo='mostrador')
+    OR (m.tipo IN ('reposicion','horneado') AND b.tipo='mostrador')
+    OR (m.tipo='venta_calculada' AND m.motivo LIKE 'Corrección:%' AND NOT EXISTS (SELECT 1 FROM movimiento_inventario other WHERE other.id_operacion=m.id_operacion AND other.tipo IN ('reposicion','horneado')))
     OR (m.tipo='merma' AND m.sentido='salida' AND b.tipo='mostrador')
     ORDER BY m.creado_en DESC, m.id_movimiento_inventario DESC`);
   const unsupported = products.rows.find(p => !['Postres', 'Viennoiserie'].includes(p.nombre_categoria));
@@ -40,7 +41,7 @@ async function readPg(client: PoolClient): Promise<State> {
     products: products.rows.map(p => ({ id: String(p.id_producto), name: p.nombre_producto, category: p.nombre_categoria, yield: p.rendimiento, minimum: p.stock_minimo, ...(p.stock_minimo_reserva === undefined ? {} : { reserveMinimum:p.stock_minimo_reserva }) })),
     lots: lots.rows.map(l => ({ id: String(l.id_lote), productId: String(l.id_producto), quantity: l.cantidad, producedAt: day(l.fecha_produccion), note: l.observaciones ?? '', yield: l.rendimiento, responsible: l.nombre_usuario })),
     shifts: shifts.rows.map(s => ({ id: String(s.id_turno), date: day(s.fecha), period: s.periodo === 'manana' ? 'Mañana' : 'Tarde', responsible: s.nombre_usuario, status: s.estado === 'abierto' ? 'open' : 'closed', openedAt: timestamp(s.abierto_en), ...(s.cerrado_en ? { closedAt: timestamp(s.cerrado_en) } : {}), rows: details.rows.filter(d => d.id_turno === s.id_turno).map(d => ({ productId: String(d.id_producto), opening: d.entrada, incoming: d.ingresos, waste: d.mermas, closing: d.conteo_cierre })) })),
-    movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), type: movementTypes[m.tipo] ?? m.tipo, quantity: m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}) })),
+    movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), type: m.tipo==='venta_calculada' ? 'Corrección de cierre' : ['reposicion','horneado'].includes(m.tipo) && m.motivo?.startsWith('Corrección:') ? 'Corrección de ingreso' : movementTypes[m.tipo] ?? m.tipo, quantity: m.tipo==='venta_calculada' ? 0 : m.sentido==='salida' && ['reposicion','horneado'].includes(m.tipo) ? -m.cantidad : m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}), ...(m.id_lote ? {lotId:String(m.id_lote)} : {}) })),
   };
 }
 
@@ -90,7 +91,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
       actor={...actor,name:profile.nombre,role:profile.rol,mustChangePassword:profile.cambiar_password};
       command=authorizeCommand(actor,command,before);
       // Same transaction as the mutation: failed commands never leave a success audit.
-      await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,`inventory.${command.type}`,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible})]);
+      await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,`inventory.${command.type}`,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,shiftId:command.shiftId,reason:command.reason,incoming:command.incoming,closing:command.closing,lotId:command.lotId})]);
     }
     if (command.type === 'restore') throw new Error('La restauración JSON solo está disponible en modo local. En PostgreSQL utiliza un respaldo de la base de datos.');
     const after = execute(before, command);
@@ -153,6 +154,26 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
       const note = `${quantity} unidades retiradas de producción del lote ${lotId} e ingresadas al mostrador.`;
       await movement({ productId: product!.id, lotId, location: 'congelador', shiftId: active!.id, type, direction: 'salida', quantity, unit: frozenUnit, user, note });
       await movement({ productId: product!.id, lotId, location: 'mostrador', shiftId: active!.id, type, direction: 'entrada', quantity, unit: displayUnit, user, note });
+    } else if (command.type === 'correctShift') {
+      const previous = before.shifts.find(s => s.id === command.shiftId)!;
+      const shift = after.shifts.find(s => s.id === command.shiftId)!;
+      const oldRow = previous.rows.find(r => r.productId === product!.id)!;
+      const row = shift.rows.find(r => r.productId === product!.id)!;
+      const user = await responsibleId(client, newLog!.responsible, 'mostrador');
+      const delta = row.incoming - oldRow.incoming;
+      const note = newLog!.note;
+      if (delta) {
+        const type = product!.category === 'Postres' ? 'reposicion' : 'horneado';
+        await movement({productId:product!.id,lotId:String(command.lotId),location:'congelador',shiftId:shift.id,type,direction:delta>0?'salida':'entrada',quantity:Math.abs(delta),unit:frozenUnit,user,note});
+        await movement({productId:product!.id,lotId:String(command.lotId),location:'mostrador',shiftId:shift.id,type,direction:delta>0?'entrada':'salida',quantity:Math.abs(delta),unit:displayUnit,user,note});
+      }
+      if (shift.status === 'closed') {
+        await client.query('UPDATE detalle_turno SET conteo_cierre=$1 WHERE id_turno=$2 AND id_producto=$3',[row.closing,shift.id,product!.id]);
+        const salesDelta = sales(row)! - sales(oldRow)!;
+        await movement({productId:product!.id,location:'mostrador',shiftId:shift.id,type:'venta_calculada',direction:salesDelta>0?'salida':'entrada',quantity:Math.abs(salesDelta),unit:displayUnit,user,note});
+        const next = after.shifts[after.shifts.findIndex(s=>s.id===shift.id)+1];
+        if (next) await client.query('UPDATE detalle_turno SET entrada=$1 WHERE id_turno=$2 AND id_producto=$3',[row.closing,next.id,product!.id]);
+      }
     } else if (command.type === 'close') {
       const shift = after.shifts.find(s => s.id === active!.id)!;
       const user = await responsibleId(client, typeof command.responsible==='string'?command.responsible:shift.responsible, 'mostrador');

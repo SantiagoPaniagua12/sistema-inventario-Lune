@@ -5,6 +5,33 @@ import { validateBackup } from '../lib/backup';
 const date = limaDate();
 function run(s: State, type: string, data: Record<string, unknown> = {}) { return execute(s, { type, revision: s.revision, ...data }); }
 function open() { return run(seed(), 'open', { date, period: 'Mañana', responsible: 'Ana', openings: { p1: 5 } }); }
+
+test('correcciones conservan reserva, trazabilidad, cierres y entrada del siguiente turno',()=>{
+  let s=run(open(),'produce',{productId:'p1',quantity:20,responsible:'Joel',date});
+  const lotId=s.lots[0].id;
+  s=run(s,'replenish',{productId:'p1',lotId,quantity:12});
+  const shiftId=s.shifts[0].id;
+  const correction={shiftId,productId:'p1',lotId,incoming:10,responsible:'Karla',reason:'Se digitó una cantidad incorrecta'};
+  s=run(s,'correctShift',correction);
+  assert.equal(s.lots[0].quantity,10);
+  assert.equal(s.shifts[0].rows[0].incoming,10);
+  assert.equal(s.movements[0].quantity,-2);
+  assert.equal(s.movements[0].responsible,'Karla');
+  s=run(s,'close',{counts:Object.fromEntries(s.products.map(p=>[p.id,p.id==='p1'?4:0]))});
+  s=run(s,'open',{date,period:'Tarde',responsible:'Shalu'});
+  s=run(s,'correctShift',{...correction,closing:3});
+  assert.equal(s.shifts[1].rows[0].opening,3);
+  assert.equal(sales(s.shifts[0].rows[0]),12);
+  assert.deepEqual(validateBackup(s),s);
+  assert.throws(()=>run(s,'correctShift',{...correction,closing:99}),/superar/);
+  assert.throws(()=>run(s,'correctShift',{...correction,closing:3,reason:''}),/Motivo/);
+  const other=run(s,'produce',{productId:'p1',quantity:10,responsible:'Joel',date});
+  assert.throws(()=>run(other,'correctShift',{...correction,incoming:0,closing:3,lotId:other.lots.at(-1)!.id}),/más unidades/);
+  assert.throws(()=>run(s,'correctShift',{...correction,incoming:100,closing:3}),/stock suficiente/);
+  assert.throws(()=>execute(s,{...correction,type:'correctShift',revision:s.revision-1}),/datos cambiaron/);
+  s=run(s,'close',{counts:Object.fromEntries(s.products.map(p=>[p.id,0]))});
+  assert.throws(()=>run(s,'correctShift',{...correction,closing:2}),/último cierre/);
+});
 test('producción y retiro por unidades conservan cantidades y calculan la venta del turno', () => {
   let s = open();
   s = run(s, 'produce', { productId: 'p1', quantity: 20, responsible: 'Cocina', date });

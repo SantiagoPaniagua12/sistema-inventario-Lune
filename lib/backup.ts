@@ -75,7 +75,9 @@ export function validateBackup(value: unknown): State {
     if (!productIds.has(productId)) fail();
     const shiftId = m.shiftId === undefined ? undefined : id(m.shiftId);
     if (shiftId && !shiftIds.has(shiftId)) fail();
-    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, 1), note: text(m.note), responsible: name(m.responsible), ...(shiftId ? { shiftId } : {}) };
+    const lotId = m.lotId === undefined ? undefined : id(m.lotId);
+    if (lotId && !lots.some(l=>l.id===lotId && l.productId===productId)) fail();
+    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, m.type==='Corrección de ingreso' ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
   });
   unique(movements.map(m => m.id));
   const extra = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);

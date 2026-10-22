@@ -14,13 +14,14 @@ export function selectedStaff(role:'cocina'|'mozo',value:unknown):string{
 export function authorizeCommand(actor: Actor, command: Command, state: State): Command {
   if (actor.mustChangePassword) throw new AccessError('Primero cambia tu contraseña.');
   if (actor.role === 'admin') {
-    if(['produce','open','replenish','close'].includes(command.type))return {...command,responsible:selectedStaff(command.type==='produce'?'cocina':'mozo',command.responsible)};
+    if(['produce','open','replenish','close','correctShift'].includes(command.type))return {...command,responsible:selectedStaff(command.type==='produce'?'cocina':'mozo',command.responsible)};
     return command;
   }
   const next = { ...command };
   const active = state.shifts.find(s => s.status === 'open');
   if (command.type === 'produce' && actor.role === 'cocina') next.responsible = selectedStaff('cocina',command.responsible);
   else if (command.type === 'open' && actor.role === 'mozo') next.responsible = selectedStaff('mozo',command.responsible);
+  else if (command.type === 'correctShift' && actor.role === 'mozo') next.responsible = selectedStaff('mozo',command.responsible);
   else if (['close', 'replenish'].includes(command.type) && actor.role === 'mozo') {
     if (!active) throw new AccessError('No hay un turno abierto.',400);
     next.responsible=selectedStaff('mozo',command.responsible);
