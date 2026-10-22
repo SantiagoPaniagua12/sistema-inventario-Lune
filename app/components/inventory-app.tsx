@@ -122,7 +122,6 @@ export default function Home({actor}:{actor:Actor}) {
       <div className="workspace"><span className="workspace-icon">L</span><div>Lune · Arequipa<small>Gestión de inventario</small></div><span className="beta">BETA</span></div>
       <p className="nav-label">ESPACIO DE TRABAJO</p>
       <nav>{(Object.keys(icons) as View[]).filter(item=>admin||!['Productos','Importar Excel'].includes(item)).map(item => { const Icon = icons[item]; return <button className={view === item ? 'nav-item active' : 'nav-item'} key={item} onClick={() => { setView(item); setMobile(false); setFilter('Todos'); setQuery(''); if (item === 'Historial') setHistoryId(historyShifts.filter(s => s.status === 'closed').at(-1)?.id ?? ''); }}><Icon size={19} />{item}{view === item && <ChevronRight size={15} />}</button>; })}</nav>
-      <div className="sidebar-note"><CircleHelp size={20} /><strong>Todo empieza con un buen conteo.</strong><p>Registra las unidades retiradas de producción y cuenta el mostrador al cerrar.</p></div>
       <div className="sidebar-bottom"><span className="avatar">L</span><div>{actor.name}<small>{actor.role}</small></div><span className="online" /></div>
     </aside>
     <main>
