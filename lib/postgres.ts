@@ -1,5 +1,5 @@
 import { Pool, type PoolClient } from 'pg';
-import { connectionConfig } from './connection-config';
+import { connectionConfig, ConnectionConfigurationError } from './connection-config';
 import { createHash } from 'node:crypto';
 
 const globals = globalThis as typeof globalThis & { lunePgPool?: Pool; lunePgPoolKey?: string };
@@ -16,6 +16,7 @@ export function getPgPool(): Pool {
   return globals.lunePgPool;
 }
 export function databaseError(error: unknown): Error {
+  if(error instanceof ConnectionConfigurationError)return error;
   const code = (error as { code?: string })?.code;
   if (code === '28P01' || code === '28000') return new Error('La base rechazó las credenciales. Revisa la configuración local de la conexión seleccionada.');
   if (['SELF_SIGNED_CERT_IN_CHAIN','DEPTH_ZERO_SELF_SIGNED_CERT','UNABLE_TO_VERIFY_LEAF_SIGNATURE','UNABLE_TO_GET_ISSUER_CERT_LOCALLY'].includes(code??'')) return new Error('No se pudo verificar el certificado TLS de Supabase. Configura el certificado CA oficial con SUPABASE_SSL_CA_FILE o SUPABASE_SSL_CA.');

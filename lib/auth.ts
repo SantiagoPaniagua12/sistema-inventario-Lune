@@ -5,6 +5,7 @@ import { getPgPool } from './postgres';
 import { AccessError, type Actor } from './access';
 import { authConfig, authCookieOptions } from './auth-config';
 import {verifiedSessionId} from './session-identity';
+import {authFailure} from './auth-failure';
 export async function authClient() {
   const config = authConfig();
   if (!config) throw new AccessError('Falta configurar Supabase Auth. Consulta la guía de acceso.', 503);
@@ -31,5 +32,8 @@ export async function requireActor(allowPasswordChange = false): Promise<Actor &
 }
 export async function requireAdmin() { const actor = await requireActor(); if (actor.role !== 'admin') throw new AccessError(); return actor; }
 export function authError(error: unknown) {
-  return Response.json({error:error instanceof AccessError ? error.message : 'No se pudo completar la solicitud. Intenta nuevamente.'},{status:error instanceof AccessError ? error.status : 503,headers:{'Cache-Control':'private, no-store'}});
+  const failure=authFailure(error);
+  // Log only an allowlisted diagnostic code: never raw driver errors, URLs or credentials.
+  if(failure.code)console.error('lune.auth.failure',{code:failure.code});
+  return Response.json({error:failure.message,...(failure.code?{code:failure.code}:{})},{status:failure.status,headers:{'Cache-Control':'private, no-store'}});
 }

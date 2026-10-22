@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/inventory.test.ts tests/request-origin.test.ts tests/supplies.test.ts tests/reports.test.ts tests/excel-alerts.test.ts tests/connection.test.ts tests/access.test.ts",
+    "test": "tsx --test tests/inventory.test.ts tests/request-origin.test.ts tests/supplies.test.ts tests/reports.test.ts tests/excel-alerts.test.ts tests/connection.test.ts tests/access.test.ts tests/auth-failure.test.ts",
     "db:features": "tsx scripts/database.ts features",
     "db:check": "tsx scripts/database.ts check",
     "db:setup": "tsx scripts/database.ts setup",
