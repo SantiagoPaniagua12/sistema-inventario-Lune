@@ -54,9 +54,17 @@ async function main() {
     assert.deepEqual(roles.rows.map(r => r.rol), ['mostrador', 'cocina']);
     await assert.rejects(() => mutatePostgres({ type: 'produce', revision: s.revision, productId: postre, quantity: 1, responsible: '  RESPONSABLE DE PRUEBA ', date: limaDate() }), /distinto/);
     const lote = s.lots[0].id;
-    await mutate('replenish', { productId: postre, lotId: lote, quantity: 12 });
+    await mutate('replenish', { productId: postre, lotId: lote, quantity: 4 });
+    assert.equal(s.shifts[0].rows.find(r => r.productId === postre)!.incoming, 4);
+    assert.equal((await getPostgresState()).lots.find(l=>l.id===lote)!.quantity,16);
+    await mutate('replenish', { productId: postre, lotId: lote, quantity: 8 });
     assert.equal(s.lots[0].quantity, 8);
     assert.equal(s.shifts[0].rows.find(r => r.productId === postre)!.incoming, 12);
+    const persisted = await getPostgresState();
+    assert.equal(persisted.shifts[0].rows.find(r => r.productId === postre)!.incoming,12);
+    assert.equal(persisted.shifts[0].rows.find(r => r.productId === postre)!.opening,5);
+    assert.equal(persisted.movements.filter(m=>m.shiftId===s.shifts[0].id&&m.productId===postre&&m.type==='Retiro de producción').length,2);
+    console.log('OK ingresos acumulados: primer ingreso 4; segundo ingreso 8; total guardado 12. Entrada inicial 5 conservada; reserva 20 → 8; dos movimientos registrados.');
     await mutate('close', { counts: { [postre]: 4, [croissant]: 0 } });
     assert.equal(sales(s.shifts[0].rows.find(r => r.productId === postre)!), 13);
     await assert.rejects(() => mutatePostgres({ type: 'open', revision: s.revision, date: limaDate(), period: 'Tarde', responsible: 'Cocina de prueba' }), /no pertenece a mostrador/);
@@ -93,6 +101,9 @@ async function main() {
     assert.equal(concurrent.filter(x => x.status === 'rejected').length, 1);
     s = await getPostgresState();
     assert.equal(s.lots[0].quantity, 7);
+    assert.equal(s.shifts[1].period,'Tarde');
+    assert.equal(s.shifts[1].rows.find(r=>r.productId===postre)!.incoming,1);
+    assert.equal(s.shifts[0].rows.find(r=>r.productId===postre)!.incoming,12);
     // Fuerza un fallo en el segundo asiento de reposición: el primero debe revertirse.
     await isolated.query(`ALTER TABLE movimiento_inventario ADD CONSTRAINT fallo_prueba
       CHECK (NOT (tipo='reposicion' AND sentido='entrada' AND cantidad=7))`);
@@ -132,6 +143,12 @@ async function main() {
     await assert.rejects(()=>mutatePostgres({type:'replenish',revision:s.revision,productId:postre,lotId:s.lots.at(-1)!.id,quantity:1,responsible:'Karla'},{id:waiterId,name:'Salón',role:'mozo',mustChangePassword:false}),/más antiguo/);
     assert.deepEqual(await getPostgresState(),s);
     s=await mutatePostgres({type:'replenish',revision:s.revision,productId:postre,lotId:lote,quantity:1,responsible:'Karla'},{id:waiterId,name:'Salón',role:'mozo',mustChangePassword:false});
+    const persistedAfternoon=await getPostgresState();
+    assert.equal(persistedAfternoon.lots.find(l=>l.id===lote)!.quantity,6);
+    assert.equal(persistedAfternoon.lots.at(-1)!.quantity,2);
+    assert.equal(persistedAfternoon.shifts[1].rows.find(r=>r.productId===postre)!.incoming,2);
+    assert.equal(persistedAfternoon.shifts[0].rows.find(r=>r.productId===postre)!.incoming,12);
+    console.log('OK descuento por turno: mañana ingresa 4 + 8 y la reserva baja 20 → 16 → 8; tarde ingresa 1 + 1 y el mismo lote baja 8 → 7 → 6. Otro lote conserva sus 2 unidades. Saldos verificados al volver a leer PostgreSQL.');
     assert.equal(s.movements[0].responsible,'Karla');
     assert.equal(s.shifts.at(-1)!.responsible,'Otro responsable');
     const audit=(await isolated.query('SELECT detalle FROM auditoria_acceso ORDER BY id DESC')).rows;
