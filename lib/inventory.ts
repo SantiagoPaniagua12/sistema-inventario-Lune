@@ -1,17 +1,26 @@
 import { initialSupplies, executeSupplyCommand, type Supply, type SupplyMovement } from './supplies';
 import { executeExcelImport, type ExcelImport } from './excel-history';
+import {WAITERS} from './staff';
 
 export type Product = { id: string; name: string; category: 'Postres' | 'Viennoiserie'; yield: number; minimum: number; reserveMinimum?: number | null };
-export type Lot = { id: string; productId: string; quantity: number; producedAt: string; note: string; yield?: number; responsible?: string };
+export type Lot = { id: string; productId: string; quantity: number; producedAt: string; note: string; yield?: number; responsible?: string; producedQuantity?:number };
 export type Row = { productId: string; opening: number; incoming: number; waste: number; closing: number | null };
-export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
-export type Movement = { id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; shiftId?: string; lotId?: string };
+export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; responsibles?:string[]; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
+export type Movement = { id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; responsibles?:string[]; shiftId?: string; lotId?: string };
 export type State = { revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[] };
 export type Command = { type: string; revision: number; [key: string]: unknown };
 export const limaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const uid = () => crypto.randomUUID();
 export const available = (r: Row) => r.opening + r.incoming - r.waste;
 export const sales = (r: Row) => r.closing === null ? null : available(r) - r.closing;
+export const shiftTeam = (shift:Shift):string[] => shift.responsibles?.length ? [...shift.responsibles] : [shift.responsible];
+export const shiftLabel = (shift:Shift):string => shiftTeam(shift).join(', ');
+export function waiterNames(value:unknown,min=1):string[]{
+  if(!Array.isArray(value)||value.length<min||value.length>4||value.some(name=>typeof name!=='string'||!(WAITERS as readonly string[]).includes(name)))throw new Error(`Selecciona entre ${min} y 4 mozos de la lista.`);
+  const names=value as string[];
+  if(new Set(names).size!==names.length)throw new Error('Los nombres de los mozos no pueden repetirse.');
+  return [...names];
+}
 // Array order breaks ties by registration order (PostgreSQL reads lots by id).
 export const oldestAvailableLot = (lots: Lot[], productId: string) => lots.filter(l => l.productId === productId && l.quantity > 0).sort((a,b) => a.producedAt.localeCompare(b.producedAt))[0];
 export const personKey = (name: string) => name.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('es-PE');
@@ -33,6 +42,35 @@ export function execute(original: State, c: Command): State {
   if (c.type === 'excelImport') return executeExcelImport(original, c);
   if (typeof c.type === 'string' && c.type.startsWith('supply')) return executeSupplyCommand(original, c);
   if (c.revision !== original.revision) throw new Error('Los datos cambiaron. Actualiza la página y vuelve a intentar.');
+  if(c.type==='produceBatch'||c.type==='replenishBatch'){
+    if(!Array.isArray(c.items)||!c.items.length||c.items.length>original.products.length)throw new Error('Ingresa al menos un producto y su cantidad.');
+    const seen=new Set<string>();
+    const items=c.items.map(item=>{
+      if(!item||typeof item!=='object')throw new Error('Producto inválido.');
+      const data=item as Record<string,unknown>;
+      if(typeof data.productId!=='string'||!original.products.some(p=>p.id===data.productId)||seen.has(data.productId))throw new Error('Revisa los productos: no pueden repetirse.');
+      seen.add(data.productId);
+      return {productId:data.productId,quantity:integer(data.quantity,'Cantidad',1)};
+    });
+    let next=original;
+    const active=original.shifts.find(shift=>shift.status==='open');
+    for(const item of items){
+      if(c.type==='produceBatch')next=execute(next,{type:'produce',revision:next.revision,...item,date:c.date,responsible:c.responsible});
+      else{
+        if(!active)throw new Error('Necesitas un turno abierto.');
+        const stock=next.lots.filter(lot=>lot.productId===item.productId).reduce((sum,lot)=>sum+lot.quantity,0);
+        if(stock<item.quantity)throw new Error(`${original.products.find(p=>p.id===item.productId)!.name}: no hay suficiente stock en reserva (${stock} disponibles).`);
+        let remaining=item.quantity;
+        while(remaining){
+          const lot=oldestAvailableLot(next.lots,item.productId)!;
+          const quantity=Math.min(remaining,lot.quantity);
+          next=execute(next,{type:'replenish',revision:next.revision,productId:item.productId,lotId:lot.id,quantity,responsible:shiftTeam(active)[0]});
+          remaining-=quantity;
+        }
+      }
+    }
+    return {...next,revision:original.revision+1};
+  }
   const s = structuredClone(original);
   const active = s.shifts.find(x => x.status === 'open');
   const product = s.products.find(x => x.id === c.productId);
@@ -47,17 +85,41 @@ export function execute(original: State, c: Command): State {
     const previous = s.shifts.at(-1);
     if (previous && (date < previous.date || (date === previous.date && (previous.period === 'Tarde' || c.period === 'Mañana')))) throw new Error('El turno debe ser posterior al último cierre.');
     const initial = c.openings as Record<string, unknown> | undefined;
-    s.shifts.push({ id: uid(), date, period: c.period, responsible: required(c.responsible, 'Responsable'), status: 'open', openedAt: new Date().toISOString(), rows: s.products.map(p => ({ productId: p.id, opening: previous ? previous.rows.find(r => r.productId === p.id)?.closing ?? 0 : integer(initial?.[p.id] ?? 0, 'Conteo inicial'), incoming: 0, waste: 0, closing: null })) });
+    const team=c.responsibles===undefined?undefined:waiterNames(c.responsibles,c.period==='Tarde'?2:1);
+    s.shifts.push({ id: uid(), date, period: c.period, responsible: team?.[0]??required(c.responsible, 'Responsable'), ...(team?{responsibles:team}:{}), status: 'open', openedAt: new Date().toISOString(), rows: s.products.map(p => ({ productId: p.id, opening: previous ? previous.rows.find(r => r.productId === p.id)?.closing ?? 0 : integer(initial?.[p.id] ?? 0, 'Conteo inicial'), incoming: 0, waste: 0, closing: null })) });
+  } else if(c.type==='addWaiters'){
+    if(!active)throw new Error('No hay un turno abierto.');
+    const added=waiterNames(c.names);
+    const team=shiftTeam(active);
+    if(added.some(name=>team.includes(name)))throw new Error('Ese mozo ya forma parte del turno.');
+    if(team.length+added.length>4)throw new Error('Un turno admite como máximo 4 mozos.');
+    active.responsibles=[...team,...added];
   } else if (c.type === 'produce') {
     if (!product) throw new Error('Producto inválido.');
     const quantity = integer(c.quantity, 'Cantidad', 1);
     const responsible = required(c.responsible, 'Responsable');
-    if (active && personKey(responsible) === personKey(active.responsible)) throw new Error('El cocinero responsable debe ser distinto del responsable del mostrador.');
+    if (active && shiftTeam(active).some(name=>personKey(responsible)===personKey(name))) throw new Error('El cocinero responsable debe ser distinto del responsable del mostrador.');
     const date = required(c.date, 'Fecha de producción');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date || date > limaDate()) throw new Error('Fecha de producción inválida o futura.');
     const note = typeof c.note === 'string' ? c.note.slice(0, 180) : '';
-    s.lots.push({ id: uid(), productId: product.id, quantity, producedAt: date, note, yield: 1, responsible });
+    s.lots.push({ id: uid(), productId: product.id, quantity, producedQuantity:quantity, producedAt: date, note, yield: 1, responsible });
     log('Producción', quantity, note, responsible);
+    s.movements[0].lotId=s.lots.at(-1)!.id;
+  } else if(c.type==='correctProduction'){
+    const lot=s.lots.find(item=>item.id===c.lotId);
+    if(!lot)throw new Error('Selecciona un registro de producción válido.');
+    const quantity=integer(c.quantity,'Cantidad producida corregida');
+    const responsible=required(c.responsible,'Cocinero responsable');
+    const reason=required(c.reason,'Motivo de la corrección');
+    const withdrawn=s.movements.filter(m=>m.lotId===lot.id&&['Retiro de producción','Horneado','Corrección de ingreso'].includes(m.type)).reduce((sum,m)=>sum+m.quantity,0);
+    const produced=lot.producedQuantity??lot.quantity+withdrawn;
+    const consumed=produced-lot.quantity;
+    if(quantity<consumed)throw new Error(`La producción no puede ser menor que las ${consumed} unidades que ya salieron de reserva.`);
+    const delta=quantity-produced;
+    if(!delta)throw new Error('No hay cambios para guardar.');
+    lot.producedQuantity=quantity;lot.quantity+=delta;
+    const previous=s.movements.find(m=>m.lotId===lot.id&&m.type==='Producción');
+    s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:lot.productId,type:'Corrección de producción',quantity:delta,lotId:lot.id,responsible,note:`Corrección de producción: ${produced} → ${quantity}. Motivo: ${reason}`,...(previous?.shiftId?{shiftId:previous.shiftId}:{})});
   } else if (c.type === 'replenish') {
     if (!active || !product) throw new Error('Necesitas un turno abierto y un producto válido.');
     const quantity = integer(c.quantity, 'Unidades congeladas', 1);
@@ -65,10 +127,13 @@ export function execute(original: State, c: Command): State {
     const lot = s.lots.find(l => l.id === c.lotId && l.productId === product.id);
     if (lot && lot.id !== oldestAvailableLot(s.lots, product.id)?.id) throw new Error('Debes ingresar primero el lote más antiguo con stock de este producto.');
     if (!lot || lot.quantity < quantity) throw new Error('El lote no tiene suficiente stock congelado.');
+    const row=active.rows.find(r=>r.productId===product.id);
+    if(!row||row.incoming+quantity>100000||available(row)+quantity>100000)throw new Error('El ingreso supera el límite permitido en el mostrador.');
     lot.quantity -= quantity;
-    active.rows.find(r => r.productId === product.id)!.incoming += quantity;
+    row.incoming += quantity;
     log(product.category === 'Postres' ? 'Retiro de producción' : 'Horneado', quantity, `${quantity} unidades retiradas de producción del lote ${lot.id.slice(0, 8)} e ingresadas al mostrador.`, required(c.responsible ?? active.responsible,'Mozo responsable'));
     s.movements[0].lotId = lot.id;
+    s.movements[0].responsibles=shiftTeam(active);
   } else if (c.type === 'correctShift') {
     const index = s.shifts.findIndex(shift => shift.id === c.shiftId);
     const shift = s.shifts[index];
@@ -85,11 +150,19 @@ export function execute(original: State, c: Command): State {
     if (row.opening + incoming - row.waste < 0 || row.opening + incoming - row.waste > 100000 || (closing !== null && closing > row.opening + incoming - row.waste)) throw new Error('El cierre no puede superar el stock disponible ni producir ventas negativas.');
     const note = `Corrección: ingreso ${row.incoming} → ${incoming}; cierre ${row.closing ?? 'pendiente'} → ${closing ?? 'pendiente'}. Motivo: ${reason}`;
     if (delta) {
-      const lot = s.lots.find(l => l.id === c.lotId && l.productId === product.id);
-      if (!lot || lot.quantity - delta < 0 || lot.quantity - delta > 100000) throw new Error('Selecciona un lote con stock suficiente.');
-      const withdrawn = s.movements.filter(m => m.shiftId === shift.id && m.productId === product.id && m.lotId === lot.id && ['Retiro de producción','Horneado','Corrección de ingreso'].includes(m.type)).reduce((sum,m) => sum + m.quantity, 0);
-      if (delta < 0 && -delta > withdrawn) throw new Error('No puedes devolver al lote más unidades de las retiradas en este turno.');
-      lot.quantity -= delta;
+      const candidates=s.lots.filter(l=>l.productId===product.id && (c.lotId===undefined || l.id===c.lotId)).sort((a,b)=>a.producedAt.localeCompare(b.producedAt));
+      if(delta<0)candidates.reverse();
+      let remaining=Math.abs(delta);
+      for(const lot of candidates){
+        const withdrawn=s.movements.filter(m=>m.shiftId===shift.id&&m.productId===product.id&&m.lotId===lot.id&&['Retiro de producción','Horneado','Corrección de ingreso'].includes(m.type)).reduce((sum,m)=>sum+m.quantity,0);
+        const quantity=Math.min(remaining,delta>0?lot.quantity:Math.max(0,withdrawn));
+        if(!quantity)continue;
+        if(lot.quantity+(delta<0?quantity:-quantity)>100000)throw new Error('La reserva corregida supera el límite permitido.');
+        lot.quantity+=delta>0?-quantity:quantity;
+        s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,type:'Corrección de ingreso',quantity:delta>0?quantity:-quantity,note,responsible,responsibles:shiftTeam(shift),shiftId:shift.id,lotId:lot.id});
+        remaining-=quantity;if(!remaining)break;
+      }
+      if(remaining)throw new Error(delta>0?'No hay stock suficiente en reserva.':'No puedes devolver al lote más unidades de las retiradas en este turno.');
     }
     row.incoming = incoming; row.closing = closing;
     const nextRow = s.shifts[index + 1]?.rows.find(r => r.productId === product.id);
@@ -97,7 +170,7 @@ export function execute(original: State, c: Command): State {
       if (closing + nextRow.incoming - nextRow.waste > 100000) throw new Error('La entrada corregida supera el límite del siguiente turno.');
       nextRow.opening = closing;
     }
-    s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,type:delta ? 'Corrección de ingreso' : 'Corrección de cierre',quantity:delta,note,responsible,shiftId:shift.id,...(delta ? {lotId:String(c.lotId)} : {})});
+    if(!delta)s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,type:'Corrección de cierre',quantity:0,note,responsible,responsibles:shiftTeam(shift),shiftId:shift.id});
   } else if (c.type === 'close') {
     if (!active) throw new Error('No hay un turno abierto.');
     const counts = c.counts as Record<string, unknown> | undefined;

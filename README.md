@@ -1,6 +1,8 @@
 # Lune · Inventario beta 0.2
 
-Aplicación web local en Next.js + React + TypeScript. Permite probar el flujo de la pastelería sin conexión a caja ni n8n.
+Aplicación web en Next.js + React + TypeScript, con Supabase Auth y persistencia relacional en Supabase. PostgreSQL local se conserva para pruebas; todavía no hay conexión a caja ni n8n.
+
+La operación simplificada incorpora ingresos de varios productos, consumo automático de los lotes más antiguos, equipos de hasta cuatro mozos, borradores de cierre recuperables y corrección de producción. Consultar [Operación simplificada](docs/OPERACION-SIMPLE.md) para preparar la actualización y usar los nuevos formularios.
 
 La beta 0.2 agrega frutas por porciones, insumos, bebidas, empaques, líquidos, limpieza, PDF de reposición y dashboards de venta calculada. El catálogo nuevo incluye 38 artículos confirmados, sin inventar existencias iniciales ni mínimos. La categoría Cocina admite la futura ampliación de 200 a 240 insumos.
 
@@ -33,7 +35,7 @@ Conexión configurada para `localhost:5433`, base `sistemainventario`, usuario `
 
 En modo PostgreSQL, la aplicación lee y escribe en las tablas relacionales. El saldo congelado se obtiene del historial de movimientos. Reposiciones, horneados y cierres se confirman dentro de transacciones con un bloqueo compartido entre procesos de la aplicación y revisión optimista. La interfaz muestra **PostgreSQL local** cuando la lectura proviene de esa base.
 
-Los responsables históricos se conservan en `usuarios` por nombre y área. Sus marcadores `!` no son contraseñas. El acceso real se guarda en Supabase Auth y `perfiles_acceso`: hay una cuenta compartida de Cocina, una de Salón y la cuenta administradora. En cada producción, apertura, reposición y cierre se selecciona al trabajador. La auditoría conserva la cuenta autenticada y el nombre declarado; ese nombre no supone una autenticación individual. Los lotes y turnos anteriores mantienen su autoría.
+Los responsables históricos se conservan en `usuarios` por nombre y área. Sus marcadores `!` no son contraseñas. El acceso real se guarda en Supabase Auth y `perfiles_acceso`: hay una cuenta compartida de Cocina, una de Salón y la cuenta administradora. Cocina selecciona al cocinero una vez por registro de producción. Salón selecciona al equipo al abrir el turno; los ingresos y el cierre toman ese equipo automáticamente. La auditoría conserva la cuenta autenticada y los responsables declarados; esos nombres no suponen una autenticación individual. Los lotes y turnos anteriores mantienen su autoría.
 
 El botón de exportar descarga una copia del estado de inventario para consulta; no es un respaldo completo de PostgreSQL. La restauración JSON está desactivada en este modo. Utilizar `pg_dump` y `pg_restore` para respaldos completos de la base. Los saldos iniciales del primer turno representan el conteo del mostrador; los turnos posteriores heredan el cierre sin duplicar entradas de stock.
 
@@ -42,23 +44,23 @@ El botón de exportar descarga una copia del estado de inventario para consulta;
 ## Primera prueba
 
 1. En **Productos**, revisar los 17 postres proporcionados para Lune, añadir los productos necesarios y confirmar los mínimos. Todos se cuentan por unidades; los mínimos iniciales son provisionales. El catálogo inicial se usa al crear datos nuevos; no reemplaza catálogos ya guardados.
-2. En **Turno actual**, abrir el primer turno con fecha, responsable y conteo físico inicial.
-3. En **Reserva congelada**, registrar producción por lote y unidades disponibles. Croissants y rolls se registran como unidades formadas congeladas.
-4. Registrar un retiro de producción u horneado: seleccionar lote y cantidad de unidades retiradas. Retirar 5 unidades resta 5 de producción y suma 5 al mostrador, sin conversiones.
+2. En **Turno actual**, abrir el primer turno con fecha, equipo de mozos y conteo físico inicial. Mañana requiere al menos uno y tarde al menos dos; máximo cuatro sin repetir.
+3. En **Reserva congelada → Agregar producción**, escribir las cantidades de los productos preparados, el cocinero y la fecha una vez. Croissants y rolls se registran como unidades formadas congeladas.
+4. En **Ingresar al mostrador**, escribir cantidades para varios productos y guardar una vez. Los lotes se asignan internamente por antigüedad, incluyendo varios lotes si hace falta. Ingresar 5 unidades resta 5 de reserva y suma 5 al mostrador, sin conversiones.
 5. Las unidades que paga un trabajador se incluyen en las unidades vendidas calculadas al cerrar; no hay un formulario de descarte.
-6. Contar todos los productos al final del turno, incluso los que están en cero. Revisar y cerrar.
+6. Contar todos los productos al final del turno, incluso los que están en cero. Los borradores se guardan automáticamente; esperar a **Guardado**, revisar y cerrar. No se vuelve a seleccionar el nombre del mozo.
 7. Abrir el siguiente turno: recibirá automáticamente el cierre anterior. Consultar cierres y movimientos en **Historial**.
 
 Venta calculada = entrada + ingresos − conteo al cierre. Incluye las unidades pagadas por trabajadores. No representa ventas verificadas de caja. Los ajustes guardados antes de esta versión conservan su efecto en los conteos históricos y se señalan en el turno cuando existen. Durante el turno el disponible es anterior al conteo y no descuenta ventas en tiempo real.
 
-El croissant clásico agrupa las bases destinadas a clásico, crema pastelera, café y almendras. Chocolate tiene base separada. Sin caja no hay desglose de sabores vendidos.
+El catálogo incluye croissant clásico, de chocolate y de almendras como productos separados. Sin caja no hay desglose de sabores de relleno que compartan una misma base.
 
 ## Datos y límites de la beta
 
-- Con `INVENTORY_STORAGE=json`, la persistencia es `data/inventory.json`, creada al guardar el primer movimiento; no se usa localStorage. No borrar esa carpeta para conservar datos. **Restaurar respaldo** valida un archivo JSON de hasta 5 MB y reemplaza los datos previa confirmación. Este modo permanece separado de PostgreSQL.
+- Con `INVENTORY_STORAGE=json`, la persistencia del inventario es `data/inventory.json`, creada al guardar el primer movimiento. La operación autenticada y los borradores compartidos requieren PostgreSQL/Supabase. La copia de recuperación de conteos pendientes usa almacenamiento del navegador, separado por cuenta, turno y pestaña; no reemplaza el guardado en la base.
 - En modo JSON se serializan escrituras y se reemplaza el archivo: ejecutar **un solo proceso del servidor** y usar disco persistente. En modo PostgreSQL se utilizan transacciones y bloqueo entre procesos que escriben desde la aplicación. Las escrituras manuales externas no participan de ese bloqueo ni actualizan la revisión.
-- Solo escucha en `127.0.0.1`. Sin autenticación ni gestión de permisos: uso local de prueba, no publicar para operación real todavía.
-- Cierres bloqueados sin edición posterior. Todavía no hay ajustes de apertura, transferencias entre locales o devoluciones. Ya no se admiten registros nuevos de descarte. Los anteriores se conservan como ajustes históricos, sin alterar los cierres.
+- El servidor de desarrollo solo escucha en `127.0.0.1`; el sitio publicado exige Supabase Auth y permisos de área.
+- El último cierre admite correcciones auditadas antes de que existan cierres posteriores. Todavía no hay ajustes de apertura ni transferencias entre locales. Las correcciones de ingreso revierten los movimientos correspondientes sin borrar el historial.
 - No configura vencimientos, descongelación ni condiciones sanitarias. Estos parámetros deben definirse con la pastelería; no hay alertas sanitarias en esta beta.
 - Los mínimos se señalan en el turno abierto y los cierres. Durante un turno se usa el disponible estimado (sin descontar ventas hasta el conteo), no el stock real en tiempo real.
 - Los movimientos nuevos registrados durante un turno se vinculan a él en Historial. Producción fuera de turno y movimientos anteriores a esta versión aparecen aparte, sin atribuirlos a un turno por suposición.
@@ -79,7 +81,7 @@ Los tests cubren retiro por unidades, traspaso de turnos, compatibilidad de ajus
 
 ## Próxima etapa
 
-Agregar autenticación y permisos, correcciones auditadas, parametrizar conservación por etapa e importar ventas externas con identificadores idempotentes. Mantener separadas la venta importada y la venta calculada para evitar descuentos dobles.
+Parametrizar conservación por etapa e importar ventas externas con identificadores idempotentes. Mantener separadas la venta importada y la venta calculada para evitar descuentos dobles.
 
 ## Conteo por unidades y fotografías
 
@@ -90,9 +92,9 @@ Las fotografías proporcionadas están en `public/images`. La sección Productos
 
 **Salidas al mostrador** muestra los ingresos netos desde reserva por producto, fecha, turno de día (mañana), tarde y total diario. Permite consultar solo postres, croissants y rolls, o ambos. Utiliza los ingresos guardados y corregidos de cada turno; no suma la entrada heredada ni confunde las ventas con salidas de reserva. Los turnos abiertos muestran su avance; los históricos de Excel se identifican como tales.
 
-**Ingresar al mostrador** selecciona automáticamente el lote con stock de fecha de producción más antigua para postres y viennoiserie. Si coinciden las fechas, se usa primero el registrado antes. El lote se muestra sin selector y el servidor rechaza usar uno posterior mientras quede stock en el anterior. Cada ingreso usa un solo lote; al agotarlo, el siguiente ingreso usa el próximo lote disponible. Las correcciones conservan la selección del lote afectado para poder compensar errores previos.
+**Ingresar al mostrador** permite registrar varios productos juntos. Los lotes se mantienen internos y se consumen por antigüedad; si coinciden las fechas, se usa primero el registrado antes. Una cantidad puede repartirse entre varios lotes, sin intervención del mozo. Las correcciones revierten las unidades de los lotes afectados y los aumentos respetan la misma prioridad.
 
-Salón y administración pueden usar **Corregir** en la tabla de turnos para cambiar el ingreso total y el stock al cierre del turno abierto o del último cierre. Se exige seleccionar un mozo y explicar el motivo; el historial conserva los valores anteriores. Los ingresos se compensan con el lote de reserva seleccionado, sin borrar movimientos ni permitir devolver más unidades de las retiradas de ese lote en ese turno. Las ventas se recalculan y un cierre corregido actualiza la entrada del siguiente turno abierto. No se modifican cierres con otros cierres posteriores ni históricos importados de Excel. Cocina no tiene este permiso.
+Salón y administración pueden usar **Corregir** en la tabla de turnos para cambiar el ingreso total y el stock al cierre del turno abierto o del último cierre. Se exige explicar el motivo y se toma automáticamente el equipo del turno. El historial conserva los valores anteriores. Los ingresos se compensan internamente con sus lotes reales, sin borrar movimientos ni permitir devolver más de lo retirado. Las ventas se recalculan y un cierre corregido actualiza la entrada del siguiente turno abierto. No se modifican cierres con otros cierres posteriores ni históricos importados de Excel. Cocina tiene una corrección separada de producción.
 
 El catálogo contiene 21 productos: 17 postres y cuatro productos de viennoiserie, incluido el croissant de almendras para turnos y reserva. Su alta existente en Supabase se realizó con `npm run catalog:almond`, sin cargar existencias ficticias. El comando es idempotente y conserva los cierres anteriores. El logo proporcionado por Lune se usa en el inicio de sesión, el menú y el pie de página.
 

@@ -38,12 +38,12 @@ async function main() {
       if (existing.rowCount) throw new Error('El proyecto destino ya tiene tablas de inventario. La migración no reemplaza ni borra datos; utiliza un proyecto vacío.');
       const sql = await readFile(path.join(process.cwd(),'database','schema.sql'),'utf8');
       await destination.query(sql.replace(/^BEGIN;\s*$/gm,'').replace(/^COMMIT;\s*$/gm,''));
-      for (const file of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql']) await destination.query(await readFile(path.join(process.cwd(),'database',file),'utf8'));
+      for (const file of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql']) await destination.query(await readFile(path.join(process.cwd(),'database',file),'utf8'));
       await insertInventorySnapshot(destination, snapshot);
       await verifyInventorySnapshot(destination,snapshot);
       await destination.query(await readFile(path.join(process.cwd(),'database','006_supabase_security.sql'),'utf8'));
       await destination.query('COMMIT');
-      console.log('Copia completada: conteos y contenido de las 12 tablas verificados. PostgreSQL local permanece intacto.');
+      console.log(`Copia completada: conteos y contenido de las ${INVENTORY_TABLES.length} tablas verificados. PostgreSQL local permanece intacto.`);
       console.log('Selecciona INVENTORY_STORAGE=supabase y verifica la aplicación antes de retirar la pausa de registros.');
     } catch (error) {
       await source.query('ROLLBACK').catch(() => {}); await destination?.query('ROLLBACK').catch(() => {});

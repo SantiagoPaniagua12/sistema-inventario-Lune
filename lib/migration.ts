@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-export const INVENTORY_TABLES = ['usuarios','categorias','productos','ubicaciones','lotes','turnos','detalle_turno','movimiento_inventario','inventario_control','insumos','movimientos_insumos','importaciones_excel'] as const;
+export const INVENTORY_TABLES = ['usuarios','categorias','productos','ubicaciones','lotes','turnos','detalle_turno','movimiento_inventario','inventario_control','insumos','movimientos_insumos','importaciones_excel','turno_responsables','operaciones_inventario','borradores_cierre'] as const;
 export type InventorySnapshot = Record<typeof INVENTORY_TABLES[number], Record<string, unknown>[]>;
 export async function inventorySnapshot(client: PoolClient): Promise<InventorySnapshot> {
   const timezone=(await client.query("SELECT current_setting('TimeZone') AS timezone")).rows[0].timezone;

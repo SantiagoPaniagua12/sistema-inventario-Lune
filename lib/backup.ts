@@ -22,6 +22,10 @@ export function validateBackup(value: unknown): State {
     return !Number.isNaN(Date.parse(s)) && /^\d{4}-\d{2}-\d{2}T/.test(s) ? s : fail();
   };
   const unique = (ids: string[]) => { if (new Set(ids).size !== ids.length) fail(); };
+  const team=(value:unknown):string[]=>{
+    const names=list(value,4).map(value=>name(value));
+    if(!names.length)fail();unique(names);return names;
+  };
 
   const root = record(value);
   number(root.revision);
@@ -42,7 +46,9 @@ export function validateBackup(value: unknown): State {
     const l = record(value);
     const productId = id(l.productId);
     if (!productIds.has(productId)) fail();
-    return { id: id(l.id), productId, quantity: number(l.quantity), producedAt: date(l.producedAt), note: text(l.note, 180), ...(l.yield === undefined ? {} : { yield: number(l.yield, 1) }), ...(l.responsible === undefined ? {} : { responsible: name(l.responsible) }) };
+    const producedQuantity=l.producedQuantity===undefined?undefined:number(l.producedQuantity);
+    if(producedQuantity!==undefined&&producedQuantity<number(l.quantity))fail();
+    return { id: id(l.id), productId, quantity: number(l.quantity), producedAt: date(l.producedAt), note: text(l.note, 180), ...(l.yield === undefined ? {} : { yield: number(l.yield, 1) }), ...(l.responsible === undefined ? {} : { responsible: name(l.responsible) }),...(producedQuantity===undefined?{}:{producedQuantity}) };
   });
   unique(lots.map(l => l.id));
   const shifts = list(root.shifts, 10000).map(value => {
@@ -61,9 +67,11 @@ export function validateBackup(value: unknown): State {
     if (s.status === 'closed' && rows.some(r => r.closing === null)) fail();
     if (s.status === 'open' && (rows.length !== products.length || rows.some(r => r.closing !== null))) fail();
     const shift: Shift = { id: id(s.id), date: date(s.date), period: s.period as Shift['period'], responsible: name(s.responsible), status: s.status as Shift['status'], rows,
+      ...(s.responsibles===undefined?{}:{responsibles:team(s.responsibles)}),
       ...(s.openedAt === undefined ? {} : { openedAt: timestamp(s.openedAt) }),
       ...(s.closedAt === undefined ? {} : { closedAt: timestamp(s.closedAt) }) };
     if (shift.status === 'closed' && !shift.closedAt) fail();
+    if(shift.responsibles&&shift.responsibles[0]!==shift.responsible)fail();
     return shift;
   });
   unique(shifts.map(s => s.id));
@@ -77,7 +85,7 @@ export function validateBackup(value: unknown): State {
     if (shiftId && !shiftIds.has(shiftId)) fail();
     const lotId = m.lotId === undefined ? undefined : id(m.lotId);
     if (lotId && !lots.some(l=>l.id===lotId && l.productId===productId)) fail();
-    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, m.type==='Corrección de ingreso' ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
+    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, ['Corrección de ingreso','Corrección de producción'].includes(String(m.type)) ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(m.responsibles===undefined?{}:{responsibles:team(m.responsibles)}), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
   });
   unique(movements.map(m => m.id));
   const extra = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);

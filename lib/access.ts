@@ -1,4 +1,4 @@
-import type { Command, State } from './inventory';
+import {shiftTeam,waiterNames,type Command,type State} from './inventory';
 import {COOKS,WAITERS} from './staff';
 export const ROLES = ['admin', 'cocina', 'mozo'] as const;
 export type Role = typeof ROLES[number];
@@ -13,22 +13,37 @@ export function selectedStaff(role:'cocina'|'mozo',value:unknown):string{
 }
 export function authorizeCommand(actor: Actor, command: Command, state: State): Command {
   if (actor.mustChangePassword) throw new AccessError('Primero cambia tu contraseña.');
-  if (actor.role === 'admin') {
-    if(['produce','open','replenish','close','correctShift'].includes(command.type))return {...command,responsible:selectedStaff(command.type==='produce'?'cocina':'mozo',command.responsible)};
-    return command;
-  }
   const next = { ...command };
   const active = state.shifts.find(s => s.status === 'open');
-  if (command.type === 'produce' && actor.role === 'cocina') next.responsible = selectedStaff('cocina',command.responsible);
-  else if (command.type === 'open' && actor.role === 'mozo') next.responsible = selectedStaff('mozo',command.responsible);
-  else if (command.type === 'correctShift' && actor.role === 'mozo') next.responsible = selectedStaff('mozo',command.responsible);
-  else if (['close', 'replenish'].includes(command.type) && actor.role === 'mozo') {
+  const kitchen=actor.role==='admin'||actor.role==='cocina';
+  const salon=actor.role==='admin'||actor.role==='mozo';
+  if(['produce','produceBatch','correctProduction'].includes(command.type)&&kitchen)next.responsible=selectedStaff('cocina',command.responsible);
+  else if(command.type==='open'&&salon){
+    try{next.responsibles=waiterNames(command.responsibles,command.period==='Tarde'?2:1);}catch(error){throw new AccessError((error as Error).message,400);}
+    next.responsible=(next.responsibles as string[])[0];
+  }
+  else if(command.type==='addWaiters'&&salon){
+    if(!active)throw new AccessError('No hay un turno abierto.',400);
+    try{next.names=waiterNames(command.names);}catch(error){throw new AccessError((error as Error).message,400);}
+    next.responsible=shiftTeam(active)[0];
+  }
+  else if(command.type==='correctShift'&&salon){
+    const shift=state.shifts.find(item=>item.id===command.shiftId);
+    if(!shift)throw new AccessError('Selecciona un turno válido.',400);
+    next.responsible=shiftTeam(shift)[0];next.responsibles=shiftTeam(shift);
+    // Las compensaciones se asignan a sus lotes reales dentro de la transacción.
+    delete next.lotId;
+  }
+  else if (['close', 'replenish','replenishBatch'].includes(command.type) && salon) {
     if (!active) throw new AccessError('No hay un turno abierto.',400);
-    next.responsible=selectedStaff('mozo',command.responsible);
+    next.responsible=shiftTeam(active)[0];next.responsibles=shiftTeam(active);
   } else if (command.type === 'supplyMove') {
+    if(actor.role==='admin')return command;
     const item = state.supplies?.find(i => i.id === command.supplyId);
     if (!item || (actor.role === 'cocina' ? !['Cocina','Frutas congeladas','Preparados líquidos'].includes(item.group) : item.group === 'Cocina')) throw new AccessError();
     next.responsible = selectedStaff(actor.role,command.responsible);
-  } else throw new AccessError();
+  } else if(actor.role==='admin')return command;
+  else throw new AccessError();
+  if(['produceBatch','replenishBatch','correctProduction'].includes(command.type)&& (typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId)))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
   return next;
 }

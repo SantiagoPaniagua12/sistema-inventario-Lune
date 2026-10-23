@@ -22,14 +22,14 @@ async function main(){
     await client.query(`SET LOCAL search_path TO "${schema}"`);
     const base=await readFile(path.join(process.cwd(),'database','schema.sql'),'utf8');
     await client.query(base.replace(/^BEGIN;\s*$/gm,'').replace(/^COMMIT;\s*$/gm,''));
-    for(const filename of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql'])await client.query(await readFile(path.join(process.cwd(),'database',filename),'utf8'));
+    for(const filename of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql'])await client.query((await readFile(path.join(process.cwd(),'database',filename),'utf8')).replaceAll('public.',`"${schema}".`));
     await insertInventorySnapshot(client,snapshot);
     const restored=await inventorySnapshot(client);
     for(const table of INVENTORY_TABLES){
       const rows=(value:unknown[])=>value.map(row=>JSON.stringify(canonical(row))).sort();
       assert.deepEqual(rows(restored[table]),rows(snapshot[table]));
     }
-    console.log('OK: ensayo de copia y restauración de los datos locales reales; coinciden todos los campos de las 12 tablas.');
+    console.log(`OK: ensayo de copia y restauración de los datos locales reales; coinciden todos los campos de las ${INVENTORY_TABLES.length} tablas.`);
     console.log('La transacción de ensayo se revierte: no se conserva el esquema de prueba, no cambia el inventario y no se conecta a Supabase.');
   }finally{await client.query('ROLLBACK');client.release();await pool.end();}
 }

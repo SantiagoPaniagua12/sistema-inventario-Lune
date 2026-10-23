@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import type { Product, Shift, State } from '@/lib/inventory';
+import {shiftLabel} from '@/lib/inventory';
 import { dailyDessertSales, salesSummary } from '@/lib/sales-summary';
 import { allSalesShifts } from '@/lib/excel-history';
 
@@ -8,7 +9,7 @@ export function ShiftSalesCard({ shift, products, counts = {} }: { shift?: Shift
   const summary = salesSummary(shift, products, counts);
   const max = Math.max(1,...summary.items.map(i=>i.quantity));
   return <section className="panel sales-dashboard" aria-label="Resumen de venta calculada">
-    <div className="panel-heading"><div><h2>Venta calculada del turno <span className={summary.complete ? 'pill green' : 'pill'}>{summary.complete ? 'Cierre guardado' : 'Provisional'}</span></h2><p>{shift ? `${shift.date} · ${shift.period} · ${shift.responsible}` : 'Selecciona o abre un turno.'}</p></div></div>
+    <div className="panel-heading"><div><h2>Venta calculada del turno <span className={summary.complete ? 'pill green' : 'pill'}>{summary.complete ? 'Cierre guardado' : 'Provisional'}</span></h2><p>{shift ? `${shift.date} · ${shift.period} · ${shiftLabel(shift)}` : 'Selecciona o abre un turno.'}</p></div></div>
     <div className="sales-metrics"><div><strong>{summary.counted ? summary.total : '—'}</strong><span>unidades vendidas calculadas</span></div><div><strong>{summary.items.length}</strong><span>productos con ventas</span></div><div><strong>{summary.counted}/{shift?.rows.length ?? 0}</strong><span>productos contados</span></div></div>
     {!summary.complete && <p className="sales-note">{summary.counted === 0 ? 'Completa los conteos de cierre en Turno actual para ver el resultado.' : `${summary.pending} productos pendientes o con conteos por revisar. Solo se suman los conteos válidos.`}</p>}
     {summary.items.length ? <div className="sales-ranking">{summary.items.map(i=><div className="sales-ranking-row" key={i.id}><div><span>{i.name}</span><strong>{i.quantity} uds.</strong></div><div className="sales-track"><span style={{width:`${i.quantity/max*100}%`}}/></div></div>)}</div> : <div className="empty">{summary.counted ? 'No hay ventas calculadas en los productos contados.' : 'El detalle por producto aparecerá al contar.'}</div>}

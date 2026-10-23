@@ -6,6 +6,7 @@ import './beta2.css';
 import './alerts-excel.css';
 import './auth.css';
 import './brand.css';
+import './simple-operations.css';
 
 export const metadata: Metadata = { title: 'Lune · Inventario', description: 'Beta 0.2 de producción, insumos e inventario por turnos para Lune.' };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

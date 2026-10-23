@@ -33,6 +33,7 @@ async function main() {
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '002_control.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '005_insumos.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '007_alertas_excel.sql'), 'utf8'));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
     const seeder = await isolated.connect();
     try { await seedSupplies(seeder); } finally { seeder.release(); }
     await isolated.query(`INSERT INTO categorias(nombre_categoria) VALUES ('Postres'),('Viennoiserie');
@@ -149,10 +150,10 @@ async function main() {
     assert.equal(persistedAfternoon.shifts[1].rows.find(r=>r.productId===postre)!.incoming,2);
     assert.equal(persistedAfternoon.shifts[0].rows.find(r=>r.productId===postre)!.incoming,12);
     console.log('OK descuento por turno: mañana ingresa 4 + 8 y la reserva baja 20 → 16 → 8; tarde ingresa 1 + 1 y el mismo lote baja 8 → 7 → 6. Otro lote conserva sus 2 unidades. Saldos verificados al volver a leer PostgreSQL.');
-    assert.equal(s.movements[0].responsible,'Karla');
+    assert.equal(s.movements[0].responsible,'Otro responsable');
     assert.equal(s.shifts.at(-1)!.responsible,'Otro responsable');
     const audit=(await isolated.query('SELECT detalle FROM auditoria_acceso ORDER BY id DESC')).rows;
-    assert.equal(audit[0].detalle.responsable,'Karla');
+    assert.equal(audit[0].detalle.responsable,'Otro responsable');
     assert.equal(audit[1].detalle.responsable,'Joel');
     await assert.rejects(()=>mutatePostgres({type:'produce',revision:s.revision,productId:postre,quantity:-1,date:limaDate(),responsible:'Alex'},cookActor));
     assert.equal((await isolated.query('SELECT count(*)::int AS n FROM auditoria_acceso')).rows[0].n,2);
@@ -191,6 +192,7 @@ async function main() {
     await copyPool.query(await readFile(path.join(process.cwd(),'database','002_control.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','005_insumos.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','007_alertas_excel.sql'),'utf8'));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
     const targetClient=await copyPool.connect();
     try {
       await targetClient.query('BEGIN');await insertInventorySnapshot(targetClient,snapshot);await verifyInventorySnapshot(targetClient,snapshot);await targetClient.query('COMMIT');

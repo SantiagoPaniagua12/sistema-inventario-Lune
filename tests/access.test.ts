@@ -12,22 +12,24 @@ test('cocina no puede abrir turnos, cambiar catálogos, importar ni restaurar',(
   assert.equal(authorizeCommand(actor('cocina'),command('produce',{responsible:'Joel'}),seed()).responsible,'Joel');
   for(const responsible of [undefined,'Salón','Karla','Intruso'])assert.throws(()=>authorizeCommand(actor('cocina'),command('produce',{responsible}),seed()),AccessError);
 });
-test('salón no puede producir ni modificar catálogos y selecciona un mozo válido',()=>{
-  assert.equal(authorizeCommand(actor('mozo'),command('correctShift',{responsible:'Karla'}),seed()).responsible,'Karla');
-  assert.throws(()=>authorizeCommand(actor('mozo'),command('correctShift',{responsible:'Alex'}),seed()),AccessError);
+test('salón no puede producir ni modificar catálogos y abre con un equipo válido',()=>{
+  assert.throws(()=>authorizeCommand(actor('mozo'),command('correctShift',{shiftId:'missing'}),seed()),AccessError);
   for(const type of ['produce','product','createProduct','excelImport','restore','supplyCreate','supplyUpdate']) assert.throws(()=>authorizeCommand(actor('mozo'),command(type),seed()),AccessError);
-  assert.equal(authorizeCommand(actor('mozo'),command('open',{responsible:'Shalu'}),seed()).responsible,'Shalu');
-  assert.throws(()=>authorizeCommand(actor('mozo'),command('open',{responsible:'Alex'}),seed()),AccessError);
+  assert.equal(authorizeCommand(actor('mozo'),command('open',{responsibles:['Shalu'],period:'Mañana'}),seed()).responsible,'Shalu');
+  assert.throws(()=>authorizeCommand(actor('mozo'),command('open',{responsible:'Shalu'}),seed()),AccessError);
+  assert.throws(()=>authorizeCommand(actor('mozo'),command('open',{responsibles:['Alex']}),seed()),AccessError);
+  assert.throws(()=>authorizeCommand(actor('mozo'),command('open',{responsibles:['Shalu'],period:'Tarde'}),seed()),AccessError);
 });
-test('salón puede registrar otro mozo en la reposición sin cambiar quién abrió el turno',()=>{
-  const state=seed();state.shifts.push({id:'s',date:'2026-10-22',period:'Mañana',responsible:'Shalu',status:'open',rows:[]});
+test('ingresos y cierre derivan el equipo del turno, sin aceptar identidad enviada por el cliente',()=>{
+  const state=seed();state.shifts.push({id:'s',date:'2026-10-22',period:'Mañana',responsible:'Shalu',responsibles:['Shalu','Karla'],status:'open',rows:[]});
   for(const type of ['close','replenish']){
-    assert.equal(authorizeCommand(actor('mozo'),command(type,{responsible:'Karla'}),state).responsible,'Karla');
+    assert.equal(authorizeCommand(actor('mozo'),command(type,{responsible:'Intruso'}),state).responsible,'Shalu');
+    assert.deepEqual(authorizeCommand(actor('mozo'),command(type),state).responsibles,['Shalu','Karla']);
     assert.equal(state.shifts[0].responsible,'Shalu');
-    assert.throws(()=>authorizeCommand(actor('mozo'),command(type),state),AccessError);
-    assert.throws(()=>authorizeCommand(actor('mozo'),command(type,{responsible:'Alex'}),state),AccessError);
     assert.equal(authorizeCommand(actor('admin'),command(type,{responsible:'Karla'}),state).type,type);
   }
+  const corrected=authorizeCommand(actor('mozo'),command('correctShift',{shiftId:'s',lotId:'arbitrary',responsible:'Intruso'}),state);
+  assert.equal(corrected.responsible,'Shalu');assert.equal(corrected.lotId,undefined);
 });
 test('insumos respetan el área y exigen seleccionar a alguien de su equipo',()=>{
   const state=seed();state.supplies!.push({id:'k',name:'Harina',group:'Cocina',unit:'bolsa',stock:null,minimum:null,capacityMl:null,packSize:1,note:'',estimated:false});
