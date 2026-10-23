@@ -85,4 +85,6 @@ El 22 de octubre se detectó `DB_CA_INVALID` por el formato de `SUPABASE_SSL_CA`
 
 Antes del despliegue conviene fijar también la longitud mínima de contraseña a 12 en Supabase Auth, para aplicar el mismo requisito incluso a clientes ajenos a esta interfaz. El doble factor del panel de Supabase, la recuperación de cuentas y los respaldos deben quedar bajo control del propietario del proyecto. La beta no incluye todavía un flujo de doble factor dentro de la aplicación ni recuperación de contraseña por correo.
 
+Los cierres y sus correcciones ahora preparan una copia operativa privada con verificación SHA-256, cola persistente y reintentos. La tabla `respaldos_turno` mantiene RLS y el bucket `lune-cierres` es privado; solo Administración puede consultar y descargar las copias mediante el servidor. Estas copias no incluyen Auth ni reemplazan un respaldo externo del proyecto completo. Preparación y límites: [respaldos por turno](RESPALDOS-POR-TURNO.md).
+
 Documentación consultada: [Auth en servidor](https://supabase.com/docs/guides/auth/server-side), [seguridad de contraseñas](https://supabase.com/docs/guides/auth/password-security), [roles PostgreSQL](https://supabase.com/docs/guides/database/postgres/roles), [preparación para producción](https://supabase.com/docs/guides/deployment/going-into-prod).

@@ -36,6 +36,8 @@ Desktop.ini
 id_rsa*
 id_ed25519*
 backups/
+!/app/api/admin/backups/
+!/app/api/admin/backups/route.ts
 *.dump
 *.backup
 *.sqlite*

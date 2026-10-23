@@ -7,6 +7,7 @@ import { readExcelImports, persistExcelImport } from './excel-store';
 import { assertInventoryWritable } from './maintenance';
 import { AccessError, authorizeCommand, type Actor } from './access';
 import {assertClosingDrafts} from './closing-drafts';
+import {shiftBackupsEnabled,enqueueShiftBackup} from './shift-backups';
 
 const day = (value: Date | string) => typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
 const timestamp = (value: Date | string) => new Date(value).toISOString();
@@ -236,6 +237,11 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     }
     if(operationId)await client.query('INSERT INTO operaciones_inventario(id,auth_id,tipo,contenido_hash) VALUES($1,$2,$3,$4)',[operationId,actor?.id??null,command.type,contentHash]);
     await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
-    return readPg(client);
+    const persisted=await readPg(client);
+    if(shiftBackupsEnabled()&&(command.type==='close'||command.type==='correctShift')){
+      const shift=persisted.shifts.find(s=>s.id===(command.type==='close'?active?.id:command.shiftId));
+      if(shift?.status==='closed')await enqueueShiftBackup(client,persisted,shift,command.type==='close'?'cierre':'correccion');
+    }
+    return persisted;
   });
 }

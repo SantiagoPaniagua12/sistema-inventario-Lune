@@ -35,6 +35,7 @@ export default function Home({actor}:{actor:Actor}) {
   }
   const [state, setState] = useState<State | null>(null);
   const [storage, setStorage] = useState('json');
+  const [backupStatus,setBackupStatus]=useState('');
   const [reserveMode, setReserveMode] = useState<'produccion' | 'frutas'>('produccion');
   const [view, setView] = useState<View>(actor.role==='cocina'?'Reserva congelada':'Turno actual');
   const [modal, setModal] = useState<Modal>(null);
@@ -55,7 +56,7 @@ export default function Home({actor}:{actor:Actor}) {
   busyRef.current = interactionLocked;
   const modalRef=useRef(modal); modalRef.current=modal;
   async function refresh() {
-    try { const response = await fetch('/api/inventory', { cache: 'no-store' }); const result = await response.json(); if(response.status===401){window.location.assign('/login');return;} if(response.status===428){window.location.assign('/cuenta');return;} if (!response.ok) throw new Error(result.error || 'No se pudo cargar el inventario.'); setState(previous=>!previous||result.revision>=previous.revision?result:previous); setStorage(response.headers.get('X-Inventory-Storage') || 'json'); setError(''); }
+    try { const response = await fetch('/api/inventory', { cache: 'no-store' }); const result = await response.json(); if(response.status===401){window.location.assign('/login');return;} if(response.status===428){window.location.assign('/cuenta');return;} if (!response.ok) throw new Error(result.error || 'No se pudo cargar el inventario.'); setState(previous=>!previous||result.revision>=previous.revision?result:previous); setStorage(response.headers.get('X-Inventory-Storage') || 'json'); setBackupStatus(response.headers.get('X-Shift-Backups')||'');setError(''); }
     catch (e) { setError((e as Error).message); }
   }
   useEffect(() => { void refresh(); const timer=setInterval(()=>{if(!busyRef.current&&!modalRef.current&&document.visibilityState==='visible')void refresh();},30000); return ()=>clearInterval(timer); }, []);
@@ -69,7 +70,7 @@ export default function Home({actor}:{actor:Actor}) {
         if(typeof result.error==='string'&&result.error.includes('Los datos cambiaron'))await refresh();
         throw new Error(result.error || 'No se pudo guardar.');
       }
-      setState(previous=>!previous||result.revision>=previous.revision?result:previous); setNotice(message); setModal(null);
+      setState(previous=>!previous||result.revision>=previous.revision?result:previous);setBackupStatus(response.headers.get('X-Shift-Backups')||''); setNotice(message); setModal(null);
       return true;
     } catch (e) { setError((e as Error).message); return false; } finally { setBusy(false); }
   }
@@ -172,10 +173,12 @@ export default function Home({actor}:{actor:Actor}) {
     </aside>
     <main>
       <header className="topbar"><div><button className="mobile-menu icon-button" onClick={() => setMobile(!mobile)} aria-label={mobile ? 'Cerrar menú' : 'Abrir menú'} aria-expanded={mobile}><Menu size={20}/></button><span>Inventario</span><ChevronRight size={14}/><strong>{view}</strong></div><span className="local-status"><span className="online"/>{storage === 'supabase' ? 'Supabase' : storage === 'postgres' ? 'PostgreSQL local' : 'Beta local'}</span></header>
-      <div className="content"><div className="account-strip"><span>{actor.name} · {actor.role}</span><a href="/cuenta">Mi contraseña</a>{admin&&<a href="/admin/usuarios">Equipo y permisos</a>}<button className="text-button" disabled={interactionLocked} onClick={logout}>Cerrar sesión</button></div>
+      <div className="content"><div className="account-strip"><span>{actor.name} · {actor.role}</span><a href="/cuenta">Mi contraseña</a>{admin&&<><a href="/admin/usuarios">Equipo y permisos</a><a href="/admin/respaldos">Respaldos</a></>}<button className="text-button" disabled={interactionLocked} onClick={logout}>Cerrar sesión</button></div>
          <div className="heading"><div><div className="eyebrow">EL DETALLE HACE LA DIFERENCIA</div><h1>{view}</h1><p>{view === 'Turno actual' ? 'Cada unidad cuenta. Lleva el control de tu mostrador.' : view === 'Reserva congelada' ? 'Tu próxima reposición empieza aquí.' : view === 'Salidas al mostrador' ? 'Consulta los productos ingresados desde reserva por fecha y turno.' : view === 'Historial' ? 'Cada turno y cada movimiento, en un solo lugar.' : 'El catálogo que da forma a tu inventario.'}</p></div><div className="heading-actions"><button className="icon-button" disabled={interactionLocked} onClick={refresh} aria-label="Actualizar datos"><RefreshCw size={18}/></button>{view === 'Reserva congelada' && reserveMode === 'produccion' && cook ? <button className="primary" disabled={interactionLocked||!state} onClick={() => show('produce')}><Plus size={17}/>Agregar producción</button> : view === 'Turno actual' && !active && waiter ? <button className="primary" disabled={interactionLocked||!state} onClick={() => show('open')}><Plus size={17}/>Abrir turno</button> : view === 'Productos' && admin ? <button className="primary" disabled={interactionLocked||!state} onClick={() => show('createProduct')}><Plus size={17}/>Nuevo producto</button> : admin && <button className="secondary" disabled={interactionLocked||!state} onClick={exportData}><Download size={16}/>Exportar respaldo</button>}</div></div>
         <div className="demo-banner"><span className="demo-dot"/>Beta 0.2 · Postres por unidades, frutas por porciones e insumos por presentación. Registra conteos iniciales y mínimos reales.</div>
         {error && <div role="alert" className="alert error">{error}<button onClick={() => setError('')} aria-label="Cerrar aviso"><X size={16}/></button></div>}
+        {backupStatus==='pending'&&<div role="status" className="alert">Hay un respaldo pendiente de envío. El cierre está guardado y la copia se reintentará automáticamente.{admin&&<> <a href="/admin/respaldos">Revisar respaldos</a></>}</div>}
+        {backupStatus==='unavailable'&&admin&&<div role="alert" className="alert error">No se pudo comprobar el estado de los respaldos. Revisa la configuración antes del próximo cierre. <a href="/admin/respaldos">Ver respaldos</a></div>}
          {notice && <div role="status" className="alert success"><Check size={17}/>{notice}<button onClick={() => setNotice('')} aria-label="Cerrar aviso"><X size={16}/></button></div>}
         {state&&<StockNotice state={state} onOpen={()=>setView('Alertas de inventario')}/>}
         {!state ? <div className="empty">Cargando inventario… {error && <button onClick={refresh}>Reintentar</button>}</div> : <>
