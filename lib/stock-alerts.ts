@@ -7,10 +7,11 @@ export function stockAlerts(state: State) {
   const latest = state.shifts.at(-1);
   for (const product of state.products) {
     const row = latest?.rows.find(row=>row.productId===product.id);
-    if (row) {
+    if (row&&state.visibility?.display!==false) {
       const stock = latest?.status === 'closed' ? row.closing : available(row);
       if (stock !== null && stock <= product.minimum) alerts.push({ id:`display:${product.id}`, productId:product.id, name:product.name, section:'Mostrador', stock, minimum:product.minimum, unit:'unidades', estimated:latest?.status === 'open', empty:stock===0 });
-    } else missingCounts++;
+    } else if(state.visibility?.display!==false) missingCounts++;
+    if(state.visibility?.reserve===false)continue;
     const lots = state.lots.filter(lot=>lot.productId===product.id);
     const minimum = product.reserveMinimum ?? null;
     if (minimum === null) missingMinimums++;

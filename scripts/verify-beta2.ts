@@ -6,7 +6,7 @@ import { getPgPool } from '../lib/postgres';
 loadEnvConfig(process.cwd());
 async function main() {
   // Invoca los handlers directamente: no levanta HTTP ni abre un puerto.
-  const response=await inventoryGet();
+  const response=await inventoryGet(new Request('http://127.0.0.1:3000/api/inventory'));
   assert.equal(response.status,200);
   const data=await response.json();
   assert(Array.isArray(data.supplies));

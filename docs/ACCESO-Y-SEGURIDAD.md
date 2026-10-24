@@ -88,3 +88,7 @@ Antes del despliegue conviene fijar también la longitud mínima de contraseña 
 Los cierres y sus correcciones ahora preparan una copia operativa privada con verificación SHA-256, cola persistente y reintentos. La tabla `respaldos_turno` mantiene RLS y el bucket `lune-cierres` es privado; solo Administración puede consultar y descargar las copias mediante el servidor. Estas copias no incluyen Auth ni reemplazan un respaldo externo del proyecto completo. Preparación y límites: [respaldos por turno](RESPALDOS-POR-TURNO.md).
 
 Documentación consultada: [Auth en servidor](https://supabase.com/docs/guides/auth/server-side), [seguridad de contraseñas](https://supabase.com/docs/guides/auth/password-security), [roles PostgreSQL](https://supabase.com/docs/guides/database/postgres/roles), [preparación para producción](https://supabase.com/docs/guides/deployment/going-into-prod).
+
+## Secciones e historial por cuenta
+
+Salón no puede consultar Reserva congelada ni Salidas al mostrador. Cocina conserva esas consultas pero no puede consultar Ventas por turno. Administración mantiene el acceso global. El historial se filtra por la cuenta autenticada, no por el nombre seleccionado por el trabajador; los datos enviados por las API también se limitan por rol. Detalles: [permisos e historial](PERMISOS-E-HISTORIAL.md).

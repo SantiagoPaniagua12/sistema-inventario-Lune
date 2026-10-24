@@ -7,6 +7,7 @@ import { readExcelImports, persistExcelImport } from './excel-store';
 import { assertInventoryWritable } from './maintenance';
 import { AccessError, authorizeCommand, type Actor } from './access';
 import {assertClosingDrafts} from './closing-drafts';
+import {operationSummary} from './operation-history';
 import {shiftBackupsEnabled,enqueueShiftBackup} from './shift-backups';
 
 const day = (value: Date | string) => typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
@@ -116,21 +117,25 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     }
     if(actor){
       command=authorizeCommand(actor,command,before);
-      // Same transaction as the mutation: failed commands never leave a success audit.
-      const teamShift=command.type==='correctShift'?before.shifts.find(s=>s.id===command.shiftId):before.shifts.find(s=>s.status==='open');
-      await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,`inventory.${command.type}`,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:command.responsibles??(teamShift?shiftTeam(teamShift):undefined),shiftId:command.shiftId,reason:command.reason,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,operationId:command.operationId})]);
     }
     if (command.type === 'restore') throw new Error('La restauración JSON solo está disponible en modo local. En PostgreSQL utiliza un respaldo de la base de datos.');
     const after = execute(before, command);
+    async function recordAudit(persisted:State){
+      if(actor){
+        const summary=operationSummary(before,persisted,command);
+        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,operationId:command.operationId,area:actor.role,history:summary})]);
+      }
+      return persisted;
+    }
     if (command.type === 'excelImport') {
       await persistExcelImport(client, after.excelImports!.at(-1)!);
       await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
-      return readPg(client);
+      return recordAudit(await readPg(client));
     }
     if (command.type.startsWith('supply')) {
       await persistSupplyCommand(client, before, after, command);
       await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
-      return readPg(client);
+      return recordAudit(await readPg(client));
     }
     const active = before.shifts.find(s => s.status === 'open');
     const product = after.products.find(p => p.id === command.productId);
@@ -237,7 +242,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     }
     if(operationId)await client.query('INSERT INTO operaciones_inventario(id,auth_id,tipo,contenido_hash) VALUES($1,$2,$3,$4)',[operationId,actor?.id??null,command.type,contentHash]);
     await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
-    const persisted=await readPg(client);
+    const persisted=await recordAudit(await readPg(client));
     if(shiftBackupsEnabled()&&(command.type==='close'||command.type==='correctShift')){
       const shift=persisted.shifts.find(s=>s.id===(command.type==='close'?active?.id:command.shiftId));
       if(shift?.status==='closed')await enqueueShiftBackup(client,persisted,shift,command.type==='close'?'cierre':'correccion');

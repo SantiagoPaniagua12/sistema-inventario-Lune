@@ -5,7 +5,7 @@ import {allSalesShifts} from '@/lib/excel-history';
 import {displayTransfers} from '@/lib/display-transfers';
 
 export function DisplayTransfers({state}:{state:State}) {
-  const shifts=allSalesShifts(state);
+  const shifts=state.transferShifts??allSalesShifts(state);
   const dates=[...new Set(shifts.map(shift=>shift.date))].sort().reverse();
   const [selectedDate,setDate]=useState(dates[0]??'');
   const [category,setCategory]=useState<Product['category']|'Todos'>('Postres');

@@ -6,6 +6,7 @@ import {getPgPool,databaseError} from '../lib/postgres';
 import {getPostgresState,mutatePostgres} from '../lib/postgres-store';
 import {limaDate,type State} from '../lib/inventory';
 import type {Actor} from '../lib/access';
+import {inventoryForActor,readOperationHistory} from '../lib/operation-history-store';
 import {seedSupplies} from '../lib/supplies-store';
 import {getClosingDraft,saveClosingDraft,DraftConflictError} from '../lib/closing-drafts';
 
@@ -26,7 +27,7 @@ async function main(){
     for(const name of ['schema.sql','002_control.sql','005_insumos.sql','007_alertas_excel.sql'])await sql(name);
     const client=await isolated.connect();try{await seedSupplies(client);}finally{client.release();}
     await isolated.query(`CREATE TABLE perfiles_acceso(auth_id uuid PRIMARY KEY,nombre text,rol text,activo boolean,cambiar_password boolean,version_acceso integer DEFAULT 1);
-      CREATE TABLE auditoria_acceso(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,auth_id uuid,accion text,detalle jsonb);
+      CREATE TABLE auditoria_acceso(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,auth_id uuid,accion text,detalle jsonb,creado_en timestamptz DEFAULT now());
       CREATE TABLE sesiones_revocadas(session_id uuid PRIMARY KEY,auth_id uuid);
       CREATE TABLE sesiones_aplicacion(session_id uuid PRIMARY KEY,auth_id uuid,version_acceso integer);
       CREATE TABLE limites_acceso(clave text PRIMARY KEY,intentos integer,vence_en timestamptz);
@@ -127,6 +128,28 @@ async function main(){
     const afternoon=await getClosingDraft(state.shifts.at(-1)!.id,salon);
     assert(afternoon.fields.every(f=>f.value===null));
     console.log('OK: borradores persisten tras cambio de sesión, CAS impide sobrescrituras, Cocina no escribe, cierre rechaza versiones antiguas y tarde exige2 mozos.');
+    await run('supplyMove',{supplyId:'liquido-0',action:'conteo',quantity:600,responsible:'Joel'},cocina);
+    await run('supplyMove',{supplyId:'liquido-0',action:'salida',quantity:10,responsible:'Shalu'},salon);
+    const visibleSalon=await inventoryForActor(state,salon),visibleKitchen=await inventoryForActor(state,cocina);
+    assert.equal(visibleSalon.lots.length,0);assert(visibleSalon.replenishment!.some(p=>p.maximum>0));
+    assert.equal(visibleKitchen.shifts.length,0);assert(visibleKitchen.transferShifts!.some(s=>s.rows.some(r=>r.incoming>0)));
+    assert.equal(visibleSalon.supplyMovements!.length,1);assert.equal(visibleSalon.supplyMovements![0].responsible,'Shalu');
+    assert.equal(visibleKitchen.supplyMovements!.length,1);assert.equal(visibleKitchen.supplyMovements![0].responsible,'Joel');
+    const kitchenHistory=await readOperationHistory(new URLSearchParams(),cocina,state);
+    assert(kitchenHistory.entries.some(e=>e.action==='produceBatch'));assert(kitchenHistory.entries.every(e=>e.area==='cocina'));assert(!kitchenHistory.entries.some(e=>e.action==='close'));
+    const salonHistory=await readOperationHistory(new URLSearchParams(),salon,state);
+    assert(salonHistory.entries.some(e=>e.action==='close'));assert(salonHistory.entries.every(e=>e.area==='mozo'));assert(!salonHistory.entries.some(e=>e.action==='produceBatch'));
+    await isolated.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES(NULL,$1,$2)',['inventory.produce',JSON.stringify({responsable:'Shalu',productId:'1'})]);
+    assert(!(await readOperationHistory(new URLSearchParams(),salon,state)).entries.some(e=>e.account==='Cuenta anterior'));
+    assert((await readOperationHistory(new URLSearchParams(),admin,state)).entries.some(e=>e.account==='Cuenta anterior'));
+    await assert.rejects(()=>readOperationHistory(new URLSearchParams({account:cocina.id}),salon,state));
+    await isolated.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) SELECT $1,$2,$3 FROM generate_series(1,55)',[salon.id,'inventory.open',JSON.stringify({responsable:'Shalu'})]);
+    const firstPage=await readOperationHistory(new URLSearchParams(),salon,state);assert.equal(firstPage.entries.length,50);assert(firstPage.nextCursor);
+    const secondPage=await readOperationHistory(new URLSearchParams({cursor:firstPage.nextCursor!}),salon,state);
+    assert(secondPage.entries.every(e=>!firstPage.entries.some(f=>f.id===e.id)));
+    assert.deepEqual(await getPostgresState(),state);
+    console.log('OK: respuestas por cuenta sin ventas de Cocina ni lotes de Salón; historial y movimientos de insumos filtrados por cuenta autenticada, datos antiguos solo para Administración, filtros protegidos y paginación sin duplicados.');
+
   }finally{
     globals.lunePgPool=pool;await isolated?.end();
     try{if(created)await pool.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await pool.end();}

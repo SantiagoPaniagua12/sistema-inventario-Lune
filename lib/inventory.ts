@@ -7,7 +7,9 @@ export type Lot = { id: string; productId: string; quantity: number; producedAt:
 export type Row = { productId: string; opening: number; incoming: number; waste: number; closing: number | null };
 export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; responsibles?:string[]; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
 export type Movement = { id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; responsibles?:string[]; shiftId?: string; lotId?: string };
-export type State = { revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[] };
+export type TransferShift = Pick<Shift,'id'|'date'|'period'|'status'> & {rows: Pick<Row,'productId'|'incoming'>[]};
+export type State = { revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[];
+  replenishment?:{productId:string;maximum:number}[];transferShifts?:TransferShift[];visibility?:{display:boolean;reserve:boolean} };
 export type Command = { type: string; revision: number; [key: string]: unknown };
 export const limaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const uid = () => crypto.randomUUID();

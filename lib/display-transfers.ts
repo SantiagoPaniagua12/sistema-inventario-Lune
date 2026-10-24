@@ -1,6 +1,6 @@
-import type {Product,Shift} from './inventory';
+import type {Product,TransferShift} from './inventory';
 
-export function displayTransfers(date:string,shifts:Shift[],products:Product[],category:Product['category']|'Todos'='Postres') {
+export function displayTransfers(date:string,shifts:TransferShift[],products:Product[],category:Product['category']|'Todos'='Postres') {
   const catalog=products.filter(product=>category==='Todos'||product.category===category);
   const periods=(['Mañana','Tarde'] as const).map(period=>({period,shift:shifts.find(shift=>shift.date===date&&shift.period===period)}));
   const items=catalog.map(product=>{

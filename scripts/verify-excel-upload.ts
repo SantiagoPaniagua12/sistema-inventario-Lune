@@ -12,7 +12,7 @@ async function main(){
   const direct=process.argv.includes('--direct');
   async function call(route:string,init?:RequestInit){
     if(!direct)return fetch(`${url}${route}`,init);
-    if(route==='/api/inventory')return (await import('../app/api/inventory/route')).GET();
+    if(route==='/api/inventory')return (await import('../app/api/inventory/route')).GET(new Request('http://127.0.0.1:3000/api/inventory'));
     const request=new Request(`${url}${route}`,init);
     return (await import('../app/api/imports/excel/preview/route')).POST(request);
   }
