@@ -7,6 +7,7 @@ export type OperationSummary={shift?:{id:string;date:string;period:string};respo
 export type HistoryEntry={id:string;at:string;account:string;area:string;action:string;label:string;kind:HistoryKind;summary:OperationSummary;legacy:boolean};
 export type HistoryPage={entries:HistoryEntry[];nextCursor:string|null};
 export const ACTIONS:Record<string,{label:string;kind:HistoryKind}>={
+ productStatus:{label:'Estado de producto actualizado',kind:'Catálogo'},productDelete:{label:'Producto eliminado sin historial',kind:'Catálogo'},supplyStatus:{label:'Estado de insumo actualizado',kind:'Catálogo'},supplyDelete:{label:'Insumo eliminado sin historial',kind:'Catálogo'},
  open:{label:'Apertura de turno',kind:'Turnos'},close:{label:'Cierre de turno',kind:'Turnos'},addWaiters:{label:'Mozos agregados al turno',kind:'Turnos'},
  replenish:{label:'Ingreso al mostrador',kind:'Mostrador'},replenishBatch:{label:'Ingreso de productos al mostrador',kind:'Mostrador'},correctShift:{label:'Corrección de ingreso o cierre',kind:'Mostrador'},
  produce:{label:'Producción registrada',kind:'Producción'},produceBatch:{label:'Producción de productos',kind:'Producción'},correctProduction:{label:'Corrección de producción',kind:'Producción'},
@@ -15,7 +16,7 @@ export const ACTIONS:Record<string,{label:string;kind:HistoryKind}>={
 };
 export function operationSummary(before:State,after:State,command:Command):OperationSummary{
  const active=before.shifts.find(s=>s.status==='open');
- const shift=command.type==='open'?after.shifts.at(-1):command.type.startsWith('supply')||['product','createProduct','excelImport'].includes(command.type)?undefined:after.shifts.find(s=>s.id===(command.shiftId??active?.id));
+ const shift=command.type==='open'?after.shifts.at(-1):command.type.startsWith('supply')||['product','createProduct','productStatus','productDelete','excelImport'].includes(command.type)?undefined:after.shifts.find(s=>s.id===(command.shiftId??active?.id));
  const previousIds=new Set(before.movements.map(m=>m.id));
  const logs=after.movements.filter(m=>!previousIds.has(m.id));
  const supplyIds=new Set(before.supplyMovements?.map(m=>m.id));
@@ -25,15 +26,16 @@ export function operationSummary(before:State,after:State,command:Command):Opera
  else if(command.type==='correctShift'){
    const row=shift?.rows.find(r=>r.productId===command.productId),old=before.shifts.find(s=>s.id===shift?.id)?.rows.find(r=>r.productId===command.productId);
    const name=after.products.find(p=>p.id===command.productId)?.name??'Producto';
-   if(row&&old){items=[{name,quantity:row.incoming,unit:'ingreso total',before:old.incoming,after:row.incoming}];if(shift?.status==='closed')items.push({name,quantity:row.closing,unit:'stock al cierre',before:old.closing,after:row.closing});}
+   if(row&&old){items=[{name,quantity:row.incoming,unit:'ingreso total',before:old.incoming,after:row.incoming}];if(shift?.status==='closed')items.push({name,quantity:row.closing,unit:'salida',before:old.closing,after:row.closing});}
  }else if(command.type==='correctProduction'){
    const lot=after.lots.find(l=>l.id===command.lotId),old=before.lots.find(l=>l.id===command.lotId);
    if(lot&&old)items=[{name:after.products.find(p=>p.id===lot.productId)?.name??'Producto',quantity:lot.producedQuantity??null,unit:'unidades producidas',before:old.producedQuantity??null,after:lot.producedQuantity??null}];
  }else if(supplyLogs.length)items=supplyLogs.map(m=>({name:after.supplies?.find(s=>s.id===m.supplyId)?.name??'Insumo',quantity:m.quantity,unit:unitLabel(after.supplies?.find(s=>s.id===m.supplyId)?.unit??'unidad'),before:m.before,after:m.after}));
  else if(logs.length)items=after.products.flatMap(p=>{const matching=logs.filter(m=>m.productId===p.id);return matching.length?[{name:p.name,quantity:matching.reduce((n,m)=>n+m.quantity,0),unit:'unidades'}]:[];});
+ else if(command.type==='productDelete'||command.type==='supplyDelete'){const name=before.products.find(p=>p.id===command.productId)?.name??before.supplies?.find(s=>s.id===command.supplyId)?.name;if(name)items=[{name,quantity:null,unit:''}];}
  else if(command.productId||command.supplyId){const name=after.products.find(p=>p.id===command.productId)?.name??after.supplies?.find(s=>s.id===command.supplyId)?.name; if(name)items=[{name,quantity:null,unit:''}];}
  const team=command.type==='produce'||command.type==='produceBatch'||command.type==='correctProduction'?[String(command.responsible)]:shift?shiftTeam(shift):typeof command.responsible==='string'?[command.responsible]:[];
- return {responsibles:team,items,note:[command.type==='supplyMove'?command.action:command.type==='addWaiters'&&Array.isArray(command.names)?'Se incorporan: '+command.names.join(', '):'',typeof command.reason==='string'?command.reason:typeof command.note==='string'?command.note:''].filter(Boolean).join(' · '),supplyMovementIds:supplyLogs.map(m=>m.id),...(shift?{shift:{id:shift.id,date:shift.date,period:shift.period}}:{})};
+ return {responsibles:team,items,note:[['productStatus','supplyStatus'].includes(command.type)?(command.active?'Producto activado':'Producto desactivado'):command.type==='supplyMove'?command.action:command.type==='addWaiters'&&Array.isArray(command.names)?'Se incorporan: '+command.names.join(', '):'',typeof command.reason==='string'?command.reason:typeof command.note==='string'?command.note:''].filter(Boolean).join(' · '),supplyMovementIds:supplyLogs.map(m=>m.id),...(shift?{shift:{id:shift.id,date:shift.date,period:shift.period}}:{})};
 }
 /** Legacy events keep only known audit data; never infer an account from a name. */
 export function legacySummary(detail:Record<string,unknown>,state:State):OperationSummary{

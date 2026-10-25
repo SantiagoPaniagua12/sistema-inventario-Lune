@@ -32,8 +32,8 @@ export function CloseShiftDialog({shift,products,counts,busy,error,onCancel,onCo
     <div className="operation-scroll">
       <p className="form-note">{shift.date} · Turno {shift.period.toLowerCase()}<br/><strong>Responsables: {shiftLabel(shift)}</strong></p>
       <div className="close-summary"><div><strong>{shift.rows.length}</strong><span>productos contados</span></div><div><strong>{remaining}</strong><span>unidades al cierre</span></div><div><strong>{sold}</strong><span>ventas calculadas</span></div></div>
-      <div className="table-wrap" role="region" aria-label="Resumen de conteos al cierre" tabIndex={0}><table><thead><tr><th>PRODUCTO</th><th>STOCK AL CIERRE</th></tr></thead><tbody>{shift.rows.map(row=><tr key={row.productId}><td>{products.find(product=>product.id===row.productId)?.name??'Producto'}</td><td><strong>{counts[row.productId]}</strong></td></tr>)}</tbody></table></div>
-      <p className="form-note">El stock al cierre será la entrada del siguiente turno. Puedes volver para revisar los conteos sin perder lo guardado.</p>
+      <div className="table-wrap" role="region" aria-label="Resumen de conteos al cierre" tabIndex={0}><table><thead><tr><th>PRODUCTO</th><th>SALIDA</th></tr></thead><tbody>{shift.rows.map(row=><tr key={row.productId}><td>{products.find(product=>product.id===row.productId)?.name??'Producto'}</td><td><strong>{counts[row.productId]}</strong></td></tr>)}</tbody></table></div>
+      <p className="form-note">La salida será la entrada del siguiente turno. Puedes volver para revisar los conteos sin perder lo guardado.</p>
       {error&&<div className="alert error" role="alert">{error}</div>}
     </div>
     <div className="modal-footer"><button data-return className="secondary" disabled={busy} onClick={onCancel}>Volver al conteo</button><button className="primary" disabled={busy} onClick={onConfirm}><Check size={16}/>{busy?'Guardando cierre…':'Confirmar cierre'}</button></div>

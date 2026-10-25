@@ -8,6 +8,7 @@ import { assertInventoryWritable } from './maintenance';
 import { AccessError, authorizeCommand, type Actor } from './access';
 import {assertClosingDrafts} from './closing-drafts';
 import {operationSummary} from './operation-history';
+import {normalizeCategory} from './catalog';
 import {shiftBackupsEnabled,enqueueShiftBackup} from './shift-backups';
 
 const day = (value: Date | string) => typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
@@ -44,14 +45,14 @@ async function readPg(client: PoolClient): Promise<State> {
     OR (m.tipo='venta_calculada' AND m.motivo LIKE 'Corrección:%' AND NOT EXISTS (SELECT 1 FROM movimiento_inventario other WHERE other.id_operacion=m.id_operacion AND other.tipo IN ('reposicion','horneado')))
     OR (m.tipo='merma' AND m.sentido='salida' AND b.tipo='mostrador')
     ORDER BY m.creado_en DESC, m.id_movimiento_inventario DESC`);
-  const unsupported = products.rows.find(p => !['Postres', 'Viennoiserie'].includes(p.nombre_categoria));
-  if (unsupported) throw new Error('La beta admite las categorías Postres y Viennoiserie. Revisa el catálogo antes de continuar.');
+  const unsupported = products.rows.find(p => !normalizeCategory(p.nombre_categoria));
+  if (unsupported) throw new Error('La beta admite las categorías Postres y Bollería. Revisa el catálogo antes de continuar.');
   const supplyState = await readSupplies(client);
   return {
     ...supplyState,
     excelImports: await readExcelImports(client),
     revision: Number(control.rows[0].revision),
-    products: products.rows.map(p => ({ id: String(p.id_producto), name: p.nombre_producto, category: p.nombre_categoria, yield: p.rendimiento, minimum: p.stock_minimo, ...(p.stock_minimo_reserva === undefined ? {} : { reserveMinimum:p.stock_minimo_reserva }) })),
+    products: products.rows.map(p => ({ id: String(p.id_producto), name: p.nombre_producto, category: normalizeCategory(p.nombre_categoria)!, active:p.activo, yield: p.rendimiento, minimum: p.stock_minimo, ...(p.stock_minimo_reserva === undefined ? {} : { reserveMinimum:p.stock_minimo_reserva }) })),
     lots: lots.rows.map(l => ({ id: String(l.id_lote), productId: String(l.id_producto), quantity: l.cantidad, producedQuantity:l.producidas, producedAt: day(l.fecha_produccion), note: l.observaciones ?? '', yield: l.rendimiento, responsible: l.nombre_usuario })),
     shifts: shifts.rows.map(s => ({ id: String(s.id_turno), date: day(s.fecha), period: s.periodo === 'manana' ? 'Mañana' : 'Tarde', responsible: s.nombre_usuario, responsibles:teams.rows.filter(t=>t.id_turno===s.id_turno).map(t=>t.nombre_usuario).length?teams.rows.filter(t=>t.id_turno===s.id_turno).map(t=>t.nombre_usuario):[s.nombre_usuario], status: s.estado === 'abierto' ? 'open' : 'closed', openedAt: timestamp(s.abierto_en), ...(s.cerrado_en ? { closedAt: timestamp(s.cerrado_en) } : {}), rows: details.rows.filter(d => d.id_turno === s.id_turno).map(d => ({ productId: String(d.id_producto), opening: d.entrada, incoming: d.ingresos, waste: d.mermas, closing: d.conteo_cierre })) })),
     movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), type: m.tipo==='ajuste'?'Corrección de producción':m.tipo==='venta_calculada' ? 'Corrección de cierre' : ['reposicion','horneado'].includes(m.tipo) && m.motivo?.startsWith('Corrección:') ? 'Corrección de ingreso' : movementTypes[m.tipo] ?? m.tipo, quantity: m.tipo==='venta_calculada' ? 0 : m.sentido==='salida' && ['reposicion','horneado','ajuste'].includes(m.tipo) ? -m.cantidad : m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.responsables?{responsibles:m.responsables}:{}), ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}), ...(m.id_lote ? {lotId:String(m.id_lote)} : {}) })),
@@ -153,14 +154,19 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     const newLog: Movement | undefined = after.movements.length > before.movements.length ? after.movements[0] : undefined;
     const priorLogs=new Set(before.movements.map(m=>m.id));
     const newLogs=after.movements.filter(m=>!priorLogs.has(m.id));
-    if (command.type === 'product') {
+    if(command.type==='productStatus'){
+      await client.query('UPDATE productos SET activo=$1 WHERE id_producto=$2',[product!.active!==false,product!.id]);
+      if(product!.active&&active&&!before.shifts.find(s=>s.id===active.id)!.rows.some(r=>r.productId===product!.id))await client.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) VALUES($1,$2,0)',[active.id,product!.id]);
+    }else if(command.type==='productDelete'){
+      await client.query('SELECT eliminar_producto_sin_historial($1)',[command.productId]);
+    }else if (command.type === 'product') {
       if (product!.name.length > 100) throw new Error('El nombre del producto admite hasta 100 caracteres.');
       await client.query('UPDATE productos SET nombre_producto=$1,rendimiento=$2,stock_minimo=$3 WHERE id_producto=$4', [product!.name, product!.yield, product!.minimum, product!.id]);
       if (command.reserveMinimum !== undefined) await client.query('UPDATE productos SET stock_minimo_reserva=$1 WHERE id_producto=$2',[product!.reserveMinimum ?? null,product!.id]);
     } else if (command.type === 'createProduct') {
       const added = after.products.at(-1)!;
       if (added.name.length > 100) throw new Error('El nombre del producto admite hasta 100 caracteres.');
-      const category = await client.query('SELECT id_categoria FROM categorias WHERE nombre_categoria=$1', [added.category]);
+      const category = await client.query('SELECT id_categoria FROM categorias WHERE nombre_categoria=ANY($1) ORDER BY CASE WHEN nombre_categoria=$2 THEN 0 ELSE 1 END LIMIT 1', [[added.category,...(added.category==='Bollería'?['Viennoiserie']:[])],added.category]);
       if (!category.rowCount) throw new Error('No se encontró la categoría del producto. Ejecuta npm run db:setup.');
       const inserted = await client.query('INSERT INTO productos (id_categoria,nombre_producto,rendimiento,stock_minimo,activo) VALUES ($1,$2,$3,$4,true) RETURNING id_producto', [category.rows[0].id_categoria, added.name, added.yield, added.minimum]);
       if (command.reserveMinimum !== undefined) await client.query('UPDATE productos SET stock_minimo_reserva=$1 WHERE id_producto=$2',[added.reserveMinimum ?? null,inserted.rows[0].id_producto]);
@@ -232,7 +238,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
       }
     } else if (command.type === 'close') {
       const shift = after.shifts.find(s => s.id === active!.id)!;
-      await assertClosingDrafts(client,shift.id,command.counts,command.draftVersions);
+      await assertClosingDrafts(client,shift.id,command.counts,command.draftVersions,new Set(shift.rows.filter(r=>r.opening+r.incoming-r.waste===0).map(r=>r.productId)));
       const user = await responsibleId(client, shift.responsible, 'mostrador');
       for (const row of shift.rows) {
         await client.query('UPDATE detalle_turno SET conteo_cierre=$1 WHERE id_turno=$2 AND id_producto=$3', [row.closing, shift.id, row.productId]);

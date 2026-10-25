@@ -62,7 +62,7 @@ async function main() {
   }
   await pgTransaction(async client => {
     await client.query(await readFile(path.join(process.cwd(), 'database', '002_control.sql'), 'utf8'));
-    for (const category of ['Postres', 'Viennoiserie']) await client.query('INSERT INTO categorias (nombre_categoria) VALUES ($1) ON CONFLICT (nombre_categoria) DO NOTHING', [category]);
+    for (const category of ['Postres', 'Bollería']) await client.query('INSERT INTO categorias (nombre_categoria) VALUES ($1) ON CONFLICT (nombre_categoria) DO NOTHING', [category]);
     for (const [name, type] of [['Congelador', 'congelador'], ['Mostrador', 'mostrador']]) {
       const existing = await client.query('SELECT id_ubicacion FROM ubicaciones WHERE tipo=$1', [type]);
       if (!existing.rowCount) await client.query('INSERT INTO ubicaciones (nombre_ubicacion,tipo) VALUES ($1,$2)', [name, type]);

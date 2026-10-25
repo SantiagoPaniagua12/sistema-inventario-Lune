@@ -1,4 +1,5 @@
 import { available, type State, type Product, type Shift } from './inventory';
+import {normalizeCategory} from './catalog';
 import { validateSupplyBackup } from './supplies';
 import { validateExcelBackup, excelConflicts } from './excel-history';
 
@@ -31,11 +32,11 @@ export function validateBackup(value: unknown): State {
   number(root.revision);
   const products = list(root.products, 1000).map(value => {
     const p = record(value);
-    const category = p.category as Product['category'];
-    if (category !== 'Postres' && category !== 'Viennoiserie') fail();
+    const category = normalizeCategory(p.category);
+    if (category !== 'Postres' && category !== 'Bollería') fail();
     const yieldValue = number(p.yield, 1);
-    if (category === 'Viennoiserie' && yieldValue !== 1) fail();
-    return { id: id(p.id), name: name(p.name), category, yield: yieldValue, minimum: number(p.minimum), ...(p.reserveMinimum === undefined ? {} : { reserveMinimum:p.reserveMinimum === null ? null : number(p.reserveMinimum) }) };
+    if (category === 'Bollería' && yieldValue !== 1) fail();
+    return { id: id(p.id), name: name(p.name), category:category!, yield: yieldValue, minimum: number(p.minimum), ...(p.active===undefined?{}:{active:typeof p.active==='boolean'?p.active:fail()}), ...(p.reserveMinimum === undefined ? {} : { reserveMinimum:p.reserveMinimum === null ? null : number(p.reserveMinimum) }) };
   });
   if (!products.length) fail();
   unique(products.map(p => p.id));
@@ -65,7 +66,7 @@ export function validateBackup(value: unknown): State {
     });
     unique(rows.map(r => r.productId));
     if (s.status === 'closed' && rows.some(r => r.closing === null)) fail();
-    if (s.status === 'open' && (rows.length !== products.length || rows.some(r => r.closing !== null))) fail();
+    if (s.status === 'open' && (products.some(p=>p.active!==false&&!rows.some(r=>r.productId===p.id)) || rows.some(r => r.closing !== null))) fail();
     const shift: Shift = { id: id(s.id), date: date(s.date), period: s.period as Shift['period'], responsible: name(s.responsible), status: s.status as Shift['status'], rows,
       ...(s.responsibles===undefined?{}:{responsibles:team(s.responsibles)}),
       ...(s.openedAt === undefined ? {} : { openedAt: timestamp(s.openedAt) }),

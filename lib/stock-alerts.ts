@@ -6,6 +6,7 @@ export function stockAlerts(state: State) {
   let missingCounts = 0, missingMinimums = 0;
   const latest = state.shifts.at(-1);
   for (const product of state.products) {
+    if(product.active===false)continue;
     const row = latest?.rows.find(row=>row.productId===product.id);
     if (row&&state.visibility?.display!==false) {
       const stock = latest?.status === 'closed' ? row.closing : available(row);
@@ -20,6 +21,7 @@ export function stockAlerts(state: State) {
     if (stock === 0 || minimum !== null && stock <= minimum) alerts.push({ id:`reserve:${product.id}`, productId:product.id, name:product.name, section:'Reserva congelada', stock, minimum, unit:'unidades', estimated:false, empty:stock===0 });
   }
   for (const supply of state.supplies ?? []) {
+    if(supply.active===false)continue;
     if (supply.minimum === null) missingMinimums++;
     if (supply.stock === null) { missingCounts++; continue; }
     if (supply.stock === 0 || supply.minimum !== null && supply.stock <= supply.minimum) alerts.push({ id:`supply:${supply.id}`, productId:supply.id, name:supply.name, section:supply.group, stock:supply.stock, minimum:supply.minimum, unit:unitLabel(supply.unit), estimated:supply.estimated, empty:supply.stock===0 });

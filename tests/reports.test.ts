@@ -16,7 +16,7 @@ test('salidas al mostrador separan fecha, turnos y productos sin sumar entradas 
   const report=displayTransfers('2026-10-22',shifts,s.products);
   assert.equal(report.morning,4);assert.equal(report.afternoon,2);assert.equal(report.total,6);
   assert.deepEqual(report.items.map(i=>[i.id,i.morning,i.afternoon,i.total]),[['p1',3,2,5],['p2',1,null,1]]);
-  assert.equal(displayTransfers('2026-10-22',shifts,s.products,'Viennoiserie').total,4);
+  assert.equal(displayTransfers('2026-10-22',shifts,s.products,'Bollería').total,4);
   assert.equal(displayTransfers('2026-10-22',shifts,s.products,'Todos').total,10);
   const missing=displayTransfers('2026-10-20',shifts,s.products);
   assert.equal(missing.total,0);assert(missing.periods.every(p=>!p.shift));

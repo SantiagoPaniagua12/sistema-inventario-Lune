@@ -68,13 +68,13 @@ export async function saveClosingDraft(body:Record<string,unknown>,actor:Actor):
 }
 
 // Invoked inside the inventory close transaction with its advisory lock already held.
-export async function assertClosingDrafts(client:PoolClient,shiftId:string,counts:unknown,versions:unknown) {
+export async function assertClosingDrafts(client:PoolClient,shiftId:string,counts:unknown,versions:unknown,zeroStockIds:ReadonlySet<string>=new Set()) {
   const result=await client.query('SELECT id_producto,cantidad,version FROM borradores_cierre WHERE id_turno=$1',[shiftId]);
   if(!result.rowCount)return;
   const values=counts&&typeof counts==='object'&&!Array.isArray(counts)?counts as Record<string,unknown>:{};
   const expected=versions&&typeof versions==='object'&&!Array.isArray(versions)?versions as Record<string,unknown>:{};
   for(const row of result.rows){
     const id=String(row.id_producto);
-    if(expected[id]!==row.version||values[id]!==row.cantidad)throw new AccessError('Los conteos cambiaron en otra pestaña. Actualiza el borrador antes de cerrar el turno.',409);
+    if(expected[id]!==row.version||values[id]!==row.cantidad&&!(zeroStockIds.has(id)&&values[id]===0))throw new AccessError('Los conteos cambiaron en otra pestaña. Actualiza el borrador antes de cerrar el turno.',409);
   }
 }

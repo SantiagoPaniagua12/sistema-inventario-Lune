@@ -17,13 +17,13 @@ async function main(){
   const globals=globalThis as typeof globalThis&{lunePgPool?:Pool};
   let source:Pool|undefined,target:Pool|undefined,created=false,copyCreated=false;
   async function prepare(pool:Pool,name:string){
-    for(const file of ['schema.sql','002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql','014_respaldos_turno.sql'])await pool.query((await readFile(`database/${file}`,'utf8')).replaceAll('public.',`"${name}".`));
+    for(const file of ['schema.sql','002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql','014_respaldos_turno.sql','015_catalogo_operacion.sql'])await pool.query((await readFile(`database/${file}`,'utf8')).replaceAll('public.',`"${name}".`));
   }
   try{
     await base.query(`CREATE SCHEMA "${schema}"`);created=true;
     source=new Pool({...base.options,options:`-c timezone=America/Lima -c search_path=${schema}`,max:3});await prepare(source,schema);globals.lunePgPool=source;
     const c=await source.connect();try{await seedSupplies(c);}finally{c.release();}
-    await source.query("INSERT INTO categorias(nombre_categoria) VALUES('Postres'),('Viennoiserie');INSERT INTO ubicaciones(nombre_ubicacion,tipo) VALUES('Congelador','congelador'),('Mostrador','mostrador')");
+    await source.query("INSERT INTO categorias(nombre_categoria) VALUES('Postres'),('Bollería');INSERT INTO ubicaciones(nombre_ubicacion,tipo) VALUES('Congelador','congelador'),('Mostrador','mostrador')");
     let state=await getPostgresState();
     async function run(type:string,data:Record<string,unknown>={}){state=await mutatePostgres({type,revision:state.revision,...data});return state;}
     await run('createProduct',{name:'Postre de prueba',category:'Postres',yield:1,minimum:1});const productId=state.products[0].id;

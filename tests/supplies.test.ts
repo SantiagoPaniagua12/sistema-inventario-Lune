@@ -7,9 +7,9 @@ import { connectionConfig } from '../lib/connection-config';
 
 const run=(s: State,type: string,data: Record<string,unknown>)=>execute(s,{type,revision:s.revision,...data});
 const move=(s: State,supplyId: string,action: string,quantity: number,extra: Record<string,unknown>={})=>run(s,'supplyMove',{supplyId,action,quantity,responsible:'Responsable de prueba',...extra});
-test('catálogo confirmado: 38 insumos sin existencias ni mínimos inventados',()=>{
+test('catálogo confirmado: 36 insumos sin existencias ni mínimos inventados',()=>{
   const items=initialSupplies();
-  assert.equal(items.length,38);
+  assert.equal(items.length,36);
   assert.equal(items.filter(i=>i.group==='Frutas congeladas').length,6);
   assert(items.filter(i=>i.group==='Frutas congeladas').every(i=>i.unit==='porcion'&&i.capacityMl===null));
   assert.equal(items.find(i=>i.id==='agua-con-gas')?.capacityMl,355);
@@ -36,7 +36,7 @@ test('millares de cajas y retiros sueltos conservan el saldo por tamaño',()=>{
   assert.equal(s.supplies?.find(i=>i.id==='cajas-pequenas')?.stock,1965);
   assert.equal(s.supplies?.find(i=>i.id==='cajas-grandes')?.stock,null);
   assert.equal(s.supplyMovements?.[1].quantity,2000);
-  assert.throws(()=>move(s,'cajas-pequenas','salida',1,{byPack:true}),/millares/);
+  assert.throws(()=>move(s,'cajas-pequenas','salida',1,{byPack:true}),/presentación/);
   assert.deepEqual(validateBackup(s),s);
 });
 test('líquidos: porcentaje estimado, capacidad y conteo medido',()=>{

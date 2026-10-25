@@ -1,3 +1,6 @@
+import {migrateCatalog} from '../lib/catalog-migration';
+import {readSupplies} from '../lib/supplies-store';
+import {validateSupplyBackup} from '../lib/supplies';
 import { loadEnvConfig } from '@next/env';
 import { Pool } from 'pg';
 import { readFile } from 'node:fs/promises';
@@ -33,10 +36,10 @@ async function main() {
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '002_control.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '005_insumos.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '007_alertas_excel.sql'), 'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
     const seeder = await isolated.connect();
     try { await seedSupplies(seeder); } finally { seeder.release(); }
-    await isolated.query(`INSERT INTO categorias(nombre_categoria) VALUES ('Postres'),('Viennoiserie');
+    await isolated.query(`INSERT INTO categorias(nombre_categoria) VALUES ('Postres'),('Bollería');
       INSERT INTO ubicaciones(nombre_ubicacion,tipo) VALUES ('Congelador','congelador'),('Mostrador','mostrador')`);
     let s = await getPostgresState();
     const mutate = async (type: string, data: Record<string, unknown> = {}) => {
@@ -45,7 +48,7 @@ async function main() {
     };
     await mutate('createProduct', { name: 'Postre prueba', category: 'Postres', yield: 1, minimum: 4 });
     const postre = s.products[0].id;
-    await mutate('createProduct', { name: 'Croissant prueba', category: 'Viennoiserie', yield: 1, minimum: 5 });
+    await mutate('createProduct', { name: 'Croissant prueba', category: 'Bollería', yield: 1, minimum: 5 });
     const croissant = s.products[1].id;
     await mutate('open', { date: limaDate(), period: 'Mañana', responsible: 'Responsable de prueba', openings: { [postre]: 5 } });
     await mutate('produce', { productId: postre, quantity: 20, responsible: 'Cocina de prueba', date: limaDate() });
@@ -182,6 +185,39 @@ async function main() {
     await assert.rejects(()=>mutatePostgres({type:'excelImport',revision:s.revision,filename:'otra-copia.xlsx',importedBy:'Administración',records:oldRows}),/ya existe/);
     assert.deepEqual(await getPostgresState(),s);
     assert.deepEqual(validateBackup(s),s);
+    // Catálogo: permisos, historial y eliminación segura sobre datos aislados.
+    await mutate('productStatus',{productId:postre,active:false});
+    await assert.rejects(()=>mutate('productDelete',{productId:postre}),/historial|movimientos/);
+    await assert.rejects(()=>mutate('produce',{productId:postre,quantity:1,responsible:'Cocina de prueba',date:limaDate()}),/desactivado/);
+    await mutate('productStatus',{productId:postre,active:true});
+    await mutate('createProduct',{name:'Temporal sin uso',category:'Bollería',minimum:1});
+    const temporary=s.products.at(-1)!.id;await mutate('productDelete',{productId:temporary});assert(!s.products.some(p=>p.id===temporary));
+    await mutate('supplyCreate',{name:'Temporal insumo',group:'Insumos',unit:'unidad',packSize:1});
+    const supply=s.supplies!.find(i=>i.name==='Temporal insumo')!.id;await mutate('supplyDelete',{supplyId:supply});assert(!s.supplies!.some(i=>i.id===supply));
+    const migrationClient=await isolated.connect();
+    try{for(const known of [true,false]){
+      await migrationClient.query('BEGIN');
+      await migrationClient.query("DELETE FROM insumos WHERE id_insumo='kombuchas'");
+      await migrationClient.query("UPDATE categorias SET nombre_categoria='Viennoiserie' WHERE nombre_categoria='Bollería'");
+      await migrationClient.query("UPDATE insumos SET unidad='bolsa',unidades_por_paquete=1 WHERE id_insumo IN ('insumo-1','insumo-2')");
+      const sourceIds=['kombucha-0','kombucha-1','kombucha-2'];
+      for(const [index,id] of sourceIds.entries()){
+        const count=!known&&index===2?null:3+index;
+        await migrationClient.query("INSERT INTO insumos(id_insumo,nombre,categoria,unidad,stock,capacidad_ml) VALUES($1,$2,'Bebidas','botella',$3,355)",[id,'Kombucha '+index,count]);
+        if(count!==null)await migrationClient.query("INSERT INTO movimientos_insumos(id_movimiento,id_insumo,tipo,cantidad,stock_anterior,stock_posterior,responsable) VALUES($1,$2,'conteo',$3,NULL,$3,'Prueba')",[crypto.randomUUID(),id,count]);
+      }
+      const beforeSugar=(await migrationClient.query("SELECT stock,stock_minimo FROM insumos WHERE id_insumo='insumo-1'")).rows[0];
+      const first=await migrateCatalog(migrationClient);assert(first.changed);
+      const data=await readSupplies(migrationClient);validateSupplyBackup(data.supplies,data.supplyMovements);
+      assert.equal(data.supplies.find(i=>i.id==='kombuchas')!.stock,known?12:null);
+      assert.deepEqual((await migrationClient.query("SELECT stock,stock_minimo FROM insumos WHERE id_insumo='insumo-1'")).rows[0],beforeSugar);
+      assert.equal(data.supplies.find(i=>i.id==='insumo-1')!.packSize,500);
+      assert(sourceIds.every(id=>data.supplies.find(i=>i.id===id)!.active===false));
+      const again=await migrateCatalog(migrationClient);assert.equal(again.changed,false);
+      assert.deepEqual(await readSupplies(migrationClient),data);await migrationClient.query('ROLLBACK');
+    }}finally{await migrationClient.query('ROLLBACK');migrationClient.release();}
+    s=await getPostgresState();
+    console.log('OK: eliminación sin historial, productos desactivados, migración de kombuchas con y sin conteo, sobres conservados e idempotencia.');
     // Copia completa entre dos esquemas temporales: prueba el mismo proceso usado para Supabase.
     const sourceClient=await isolated.connect();
     let snapshot;
@@ -192,7 +228,7 @@ async function main() {
     await copyPool.query(await readFile(path.join(process.cwd(),'database','002_control.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','005_insumos.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','007_alertas_excel.sql'),'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
     const targetClient=await copyPool.connect();
     try {
       await targetClient.query('BEGIN');await insertInventorySnapshot(targetClient,snapshot);await verifyInventorySnapshot(targetClient,snapshot);await targetClient.query('COMMIT');

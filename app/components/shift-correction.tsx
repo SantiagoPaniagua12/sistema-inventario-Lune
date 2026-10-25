@@ -3,6 +3,7 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {createPortal} from 'react-dom';
 import type {State,Shift,Row,Product} from '@/lib/inventory';
+import {ManualCountInput} from './manual-count-input';
 import {shiftLabel} from '@/lib/inventory';
 
 export function ShiftCorrection({state,shift,row,product,busy,onSave}:{state:State;shift:Shift;row:Row;product:Product;busy:boolean;onSave:(data:Record<string,unknown>,message:string)=>Promise<boolean>}) {
@@ -38,7 +39,7 @@ export function ShiftCorrection({state,shift,row,product,busy,onSave}:{state:Sta
       <form onSubmit={submit}>
         <p className="form-note">{shift.date} · {shift.period}. La corrección conserva el registro anterior y recalcula las ventas. El cierre corregido será la entrada del siguiente turno abierto.</p>
         <label>Ingreso total del turno<input autoFocus name="incoming" type="number" required min="0" max="100000" step="1" value={incoming} onChange={event=>setIncoming(event.target.value)}/></label>
-        {shift.status==='closed'?<label>Stock al cierre<input name="closing" type="number" required min="0" max={row.opening+Number(incoming)-row.waste} step="1" defaultValue={row.closing??0}/></label>:<p className="form-note">El stock al cierre se puede editar directamente en la tabla antes de cerrar el turno.</p>}
+        {shift.status==='closed'?<label>Salida<ManualCountInput name="closing" required defaultValue={row.closing??0}/></label>:<p className="form-note">La salida se puede editar directamente en la tabla antes de cerrar el turno.</p>}
         <p className="form-note">Responsables: {shiftLabel(shift)}. El sistema ajustará automáticamente la reserva según el ingreso corregido.</p>
         <label>Motivo<input name="reason" required maxLength={180} placeholder="Explica el error que estás corrigiendo"/></label>
         {error&&<p role="alert" className="invalid-text">{error}</p>}

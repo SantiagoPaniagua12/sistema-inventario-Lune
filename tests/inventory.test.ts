@@ -106,10 +106,10 @@ test('permite añadir productos al turno abierto sin alterar los cierres anterio
   const added = s.products.at(-1)!;
   assert.deepEqual(s.shifts[0].rows.at(-1), { productId: added.id, opening: 0, incoming: 0, waste: 0, closing: null });
   assert.throws(() => run(s, 'createProduct', { name: 'nuevo postre', category: 'Postres', yield: 1, minimum: 0 }), /Ya existe/);
-  assert.throws(() => run(s, 'createProduct', { name: 'Otro', category: 'Viennoiserie', yield: 12, minimum: 0 }), /unidad/);
+  assert.throws(() => run(s, 'createProduct', { name: 'Otro', category: 'Bollería', yield: 12, minimum: 0 }), /unidad/);
   const counts = Object.fromEntries(s.products.map(p => [p.id, 0]));
   s = run(s, 'close', { counts });
-  s = run(s, 'createProduct', { name: 'Pieza', category: 'Viennoiserie', yield: 1, minimum: 1 });
+  s = run(s, 'createProduct', { name: 'Pieza', category: 'Bollería', yield: 1, minimum: 1 });
   assert.equal(s.shifts[0].rows.length, s.products.length - 1);
   s = run(s, 'open', { date: limaDate(), period: 'Tarde', responsible: 'Luis' });
   assert.equal(s.shifts[1].rows.length, s.products.length);

@@ -14,8 +14,8 @@ export function salesSummary(shift: Shift | undefined, products: Product[], coun
   return { total: items.reduce((n,i)=>n+i.quantity,0), counted, pending: shift.rows.length-counted, items, complete: shift.status === 'closed' };
 }
 
-export function dailyDessertSales(date: string, shifts: Shift[], products: Product[], counts: Record<string,string> = {}) {
-  const desserts = products.filter(product => product.category === 'Postres');
+export function dailyProductSales(date: string, shifts: Shift[], products: Product[], counts: Record<string,string> = {}, category:Product['category']|'Todos'='Todos') {
+  const desserts = products.filter(product => (category==='Todos'||product.category===category)&&(product.active!==false||shifts.some(s=>s.date===date&&s.rows.some(r=>r.productId===product.id))));
   const ids = new Set(desserts.map(product => product.id));
   const periods = (['Mañana', 'Tarde'] as const).map(period => {
     const source = shifts.find(shift => shift.date === date && shift.period === period);
@@ -30,12 +30,14 @@ export function dailyDessertSales(date: string, shifts: Shift[], products: Produ
       const summary = salesSummary({ ...shift, rows: [row] }, desserts, counts);
       return summary.counted ? summary.total : null;
     });
-    return { id: product.id, name: product.name, morning: quantities[0], afternoon: quantities[1], total: quantities.reduce<number>((sum, quantity) => sum + (quantity ?? 0), 0) };
+    return { id: product.id, name: product.name, category:product.category, morning: quantities[0], afternoon: quantities[1], total: quantities.reduce<number>((sum, quantity) => sum + (quantity ?? 0), 0) };
   }).filter(item => item.total > 0).sort((a,b) => b.total-a.total || a.name.localeCompare(b.name,'es'));
   return {
     periods, items,
     total: periods.reduce((sum, period) => sum + period.summary.total, 0),
     counted: periods.reduce((sum, period) => sum + period.summary.counted, 0),
-    complete: periods.every(({ shift, summary }) => shift?.status === 'closed' && summary.pending === 0 && summary.counted === desserts.length),
+    complete: periods.every(({ shift, summary }) => shift?.status === 'closed' && summary.pending === 0 && summary.counted === desserts.filter(p=>p.active!==false||shift?.rows.some(r=>r.productId===p.id)).length),
   };
 }
+
+export const dailyDessertSales=(date:string,shifts:Shift[],products:Product[],counts:Record<string,string>={})=>dailyProductSales(date,shifts,products,counts,'Postres');

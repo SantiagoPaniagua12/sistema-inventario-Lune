@@ -4,13 +4,15 @@ Aplicación web en Next.js + React + TypeScript, con Supabase Auth y persistenci
 
 La operación simplificada incorpora ingresos de varios productos, consumo automático de los lotes más antiguos, equipos de hasta cuatro mozos, borradores de cierre recuperables y corrección de producción. Consultar [Operación simplificada](docs/OPERACION-SIMPLE.md) para preparar la actualización y usar los nuevos formularios.
 
-La beta 0.2 agrega frutas por porciones, insumos, bebidas, empaques, líquidos, limpieza, PDF de reposición y dashboards de venta calculada. El catálogo nuevo incluye 38 artículos confirmados, sin inventar existencias iniciales ni mínimos. La categoría Cocina admite la futura ampliación de 200 a 240 insumos.
+La beta 0.2 agrega frutas por porciones, insumos, bebidas, empaques, líquidos, limpieza, PDF de reposición y dashboards de venta calculada. El catálogo nuevo incluye 36 artículos confirmados, sin inventar existencias iniciales ni mínimos. La categoría Cocina admite la futura ampliación de 200 a 240 insumos.
 
 También incorpora alertas de todas las secciones y avisos dentro del sistema, mínimos de congelador e importación histórica de Excel con vista previa. Admite los bloques por postre y fechas horizontales de Lune y registros de moldes producidos/usados por turno. Consultar [Alertas e importación de Excel](docs/alertas-e-importacion-excel.md).
 
 **El usuario autorizó mantener el puerto 3000 activo hasta que pida cerrarlo o cierre la aplicación.** Usar `npm run dev` durante los ajustes para conservar el servidor y reflejar los cambios sin reiniciarlo.
 
 La aplicación ya usa Supabase y requiere iniciar sesión con Supabase Auth. El 22 de octubre de 2026 se copiaron y verificaron las 12 tablas de inventario y se añadieron cinco tablas de acceso, sesiones y auditoría. PostgreSQL local se conserva para pruebas. Consulta primero [Acceso y seguridad](docs/ACCESO-Y-SEGURIDAD.md); la preparación de la migración está en [Beta 0.2 y Supabase](docs/supabase-beta-02.md).
+
+Consultar [Catálogo y conteos](docs/CATALOGO-Y-CONTEOS.md) para los cambios de Salida, Bollería, Kombuchas, sobres y administración del catálogo.
 
 ## Inicio
 
@@ -48,7 +50,7 @@ El botón de exportar descarga una copia del estado de inventario para consulta;
 3. En **Reserva congelada → Agregar producción**, escribir las cantidades de los productos preparados, el cocinero y la fecha una vez. Croissants y rolls se registran como unidades formadas congeladas.
 4. En **Ingresar al mostrador**, escribir cantidades para varios productos y guardar una vez. Los lotes se asignan internamente por antigüedad, incluyendo varios lotes si hace falta. Ingresar 5 unidades resta 5 de reserva y suma 5 al mostrador, sin conversiones.
 5. Las unidades que paga un trabajador se incluyen en las unidades vendidas calculadas al cerrar; no hay un formulario de descarte.
-6. Contar todos los productos al final del turno, incluso los que están en cero. Los borradores se guardan automáticamente; esperar a **Guardado**, revisar y cerrar. No se vuelve a seleccionar el nombre del mozo.
+6. Contar los productos al final del turno. Las filas sin unidades en el mostrador muestran salida cero automáticamente. Los borradores se guardan automáticamente; esperar a **Guardado**, revisar y cerrar. No se vuelve a seleccionar el nombre del mozo.
 7. Abrir el siguiente turno: recibirá automáticamente el cierre anterior. Consultar cierres y movimientos en **Historial**.
 
 Venta calculada = entrada + ingresos − conteo al cierre. Incluye las unidades pagadas por trabajadores. No representa ventas verificadas de caja. Los ajustes guardados antes de esta versión conservan su efecto en los conteos históricos y se señalan en el turno cuando existen. Durante el turno el disponible es anterior al conteo y no descuenta ventas en tiempo real.

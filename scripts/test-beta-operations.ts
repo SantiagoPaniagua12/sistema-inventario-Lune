@@ -31,14 +31,14 @@ async function main(){
       CREATE TABLE sesiones_revocadas(session_id uuid PRIMARY KEY,auth_id uuid);
       CREATE TABLE sesiones_aplicacion(session_id uuid PRIMARY KEY,auth_id uuid,version_acceso integer);
       CREATE TABLE limites_acceso(clave text PRIMARY KEY,intentos integer,vence_en timestamptz);
-      INSERT INTO categorias(nombre_categoria) VALUES('Postres'),('Viennoiserie');
+      INSERT INTO categorias(nombre_categoria) VALUES('Postres'),('Bollería');
       INSERT INTO ubicaciones(nombre_ubicacion,tipo) VALUES('Congelador','congelador'),('Mostrador','mostrador');
       INSERT INTO usuarios(nombre_usuario,password_hash,rol,activo) VALUES('Shalu','!','mostrador',true);
       INSERT INTO productos(id_categoria,nombre_producto,rendimiento,stock_minimo,activo) VALUES(1,'Pistacho prueba',1,1,true),(1,'Sacher prueba',1,1,true);`);
     const yesterday=new Date(Date.parse(`${limaDate()}T12:00:00Z`)-86400000).toISOString().slice(0,10);
     await isolated.query("INSERT INTO turnos(fecha,periodo,id_responsable,estado) VALUES($1,'tarde',1,'abierto')",[yesterday]);
     await isolated.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) SELECT 1,id_producto,0 FROM productos');
-    for(const name of ['012_operacion_simple.sql','013_borradores.sql'])await sql(name);
+    for(const name of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql'])await sql(name);
     const admin:Actor={id:crypto.randomUUID(),name:'Administración',role:'admin',mustChangePassword:false};
     const salon:Actor={id:crypto.randomUUID(),name:'Salón',role:'mozo',mustChangePassword:false};
     const cocina:Actor={id:crypto.randomUUID(),name:'Cocina',role:'cocina',mustChangePassword:false};

@@ -1,8 +1,9 @@
 import { initialSupplies, executeSupplyCommand, type Supply, type SupplyMovement } from './supplies';
 import { executeExcelImport, type ExcelImport } from './excel-history';
 import {WAITERS} from './staff';
+import {normalizeCategory,productDeletionReason,reserveQuantity} from './catalog';
 
-export type Product = { id: string; name: string; category: 'Postres' | 'Viennoiserie'; yield: number; minimum: number; reserveMinimum?: number | null };
+export type Product = { active?:boolean; id: string; name: string; category: 'Postres' | 'Bollería'; yield: number; minimum: number; reserveMinimum?: number | null };
 export type Lot = { id: string; productId: string; quantity: number; producedAt: string; note: string; yield?: number; responsible?: string; producedQuantity?:number };
 export type Row = { productId: string; opening: number; incoming: number; waste: number; closing: number | null };
 export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; responsibles?:string[]; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
@@ -29,7 +30,7 @@ export const personKey = (name: string) => name.normalize('NFC').trim().replace(
 export function seed(): State {
   const names = ['Sacher de Tumbo', 'Choux de Maracuya', 'Choux de Café', 'Tartaleta de Limón', 'Vainilla Cacao', 'Tiramisu', 'Tartaleta de Toffe', 'Pastel de Queso Japones', 'Delicia Multifloral', 'Ciudad Blanca', 'Amor Eterno', 'Charlotte de Lucuma', 'Flor Andina', 'Entremet', 'Kaori del Valle', 'Coco Mango', 'Pistacho Rose'];
   const products: Product[] = names.map((name, i) => ({ id: `p${i + 1}`, name, category: 'Postres', yield: 1, minimum: 1 }));
-  products.push(...['Croissant clásico', 'Croissant de chocolate', 'Roll de canela', 'Croissant de almendras'].map((name, i): Product => ({ id: `v${i + 1}`, name, category: 'Viennoiserie', yield: 1, minimum: 1 })));
+  products.push(...['Croissant clásico', 'Croissant de chocolate', 'Roll de canela', 'Croissant de almendras'].map((name, i): Product => ({ id: `v${i + 1}`, name, category: 'Bollería', yield: 1, minimum: 1 })));
   return { revision: 0, products, lots: [], shifts: [], movements: [], supplies: initialSupplies(), supplyMovements: [] };
 }
 function integer(value: unknown, label: string, min = 0) {
@@ -88,7 +89,7 @@ export function execute(original: State, c: Command): State {
     if (previous && (date < previous.date || (date === previous.date && (previous.period === 'Tarde' || c.period === 'Mañana')))) throw new Error('El turno debe ser posterior al último cierre.');
     const initial = c.openings as Record<string, unknown> | undefined;
     const team=c.responsibles===undefined?undefined:waiterNames(c.responsibles,c.period==='Tarde'?2:1);
-    s.shifts.push({ id: uid(), date, period: c.period, responsible: team?.[0]??required(c.responsible, 'Responsable'), ...(team?{responsibles:team}:{}), status: 'open', openedAt: new Date().toISOString(), rows: s.products.map(p => ({ productId: p.id, opening: previous ? previous.rows.find(r => r.productId === p.id)?.closing ?? 0 : integer(initial?.[p.id] ?? 0, 'Conteo inicial'), incoming: 0, waste: 0, closing: null })) });
+    s.shifts.push({ id: uid(), date, period: c.period, responsible: team?.[0]??required(c.responsible, 'Responsable'), ...(team?{responsibles:team}:{}), status: 'open', openedAt: new Date().toISOString(), rows: s.products.filter(p=>p.active!==false||reserveQuantity(s,p.id)>0||(previous?.rows.find(r=>r.productId===p.id)?.closing??0)>0).map(p => ({ productId: p.id, opening: previous ? previous.rows.find(r => r.productId === p.id)?.closing ?? 0 : integer(initial?.[p.id] ?? 0, 'Conteo inicial'), incoming: 0, waste: 0, closing: null })) });
   } else if(c.type==='addWaiters'){
     if(!active)throw new Error('No hay un turno abierto.');
     const added=waiterNames(c.names);
@@ -98,6 +99,7 @@ export function execute(original: State, c: Command): State {
     active.responsibles=[...team,...added];
   } else if (c.type === 'produce') {
     if (!product) throw new Error('Producto inválido.');
+    if(product.active===false)throw new Error('El producto está desactivado para nueva producción.');
     const quantity = integer(c.quantity, 'Cantidad', 1);
     const responsible = required(c.responsible, 'Responsable');
     if (active && shiftTeam(active).some(name=>personKey(responsible)===personKey(name))) throw new Error('El cocinero responsable debe ser distinto del responsable del mostrador.');
@@ -182,12 +184,21 @@ export function execute(original: State, c: Command): State {
       row.closing = count;
     }
     active.status = 'closed'; active.closedAt = new Date().toISOString();
+  } else if(c.type==='productStatus'){
+    if(!product||typeof c.active!=='boolean')throw new Error('Estado de producto inválido.');
+    product.active=c.active;
+    if(c.active&&active&&!active.rows.some(r=>r.productId===product.id))active.rows.push({productId:product.id,opening:0,incoming:0,waste:0,closing:null});
+  } else if(c.type==='productDelete'){
+    const reason=productDeletionReason(s,String(c.productId));if(reason)throw new Error(reason);
+    s.products=s.products.filter(p=>p.id!==c.productId);
+    if(active)active.rows=active.rows.filter(r=>r.productId!==c.productId);
   } else if (c.type === 'createProduct') {
     const name = required(c.name, 'Nombre');
     if (s.products.some(p => p.name.toLocaleLowerCase('es-PE') === name.toLocaleLowerCase('es-PE'))) throw new Error('Ya existe un producto con ese nombre.');
-    if (c.category !== 'Postres' && c.category !== 'Viennoiserie') throw new Error('Categoría inválida.');
+    const category=normalizeCategory(c.category);
+    if (!category) throw new Error('Categoría inválida.');
     if (c.yield !== undefined && c.yield !== 1) throw new Error('El inventario se controla por unidades, sin conversiones.');
-    const added: Product = { id: uid(), name, category: c.category, yield: 1, minimum: integer(c.minimum, 'Mínimo') };
+    const added: Product = { id: uid(), name, category, yield: 1, minimum: integer(c.minimum, 'Mínimo') };
     s.products.push(added);
     if (c.reserveMinimum !== undefined) added.reserveMinimum = c.reserveMinimum === null ? null : integer(c.reserveMinimum, 'Mínimo en reserva');
     if (active) active.rows.push({ productId: added.id, opening: 0, incoming: 0, waste: 0, closing: null });

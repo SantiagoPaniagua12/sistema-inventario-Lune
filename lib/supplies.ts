@@ -1,17 +1,18 @@
 import type { Command, State } from './inventory';
+import {supplyDeletionReason} from './catalog';
 
 export const SUPPLY_GROUPS = ['Frutas congeladas', 'Insumos', 'Bebidas', 'Empaques', 'Preparados líquidos', 'Limpieza', 'Cocina'] as const;
-export const SUPPLY_UNITS = ['porcion', 'bolsa', 'caja', 'botella', 'unidad', 'paquete', 'ml'] as const;
+export const SUPPLY_UNITS = ['porcion', 'bolsa', 'caja', 'botella', 'unidad', 'paquete', 'ml', 'sobre'] as const;
 export type SupplyGroup = typeof SUPPLY_GROUPS[number];
 export type SupplyUnit = typeof SUPPLY_UNITS[number];
-export type Supply = { id: string; name: string; group: SupplyGroup; unit: SupplyUnit; minimum: number | null; stock: number | null; capacityMl: number | null; packSize: number; note: string; estimated: boolean };
+export type Supply = { active?:boolean; mergedInto?:string; id: string; name: string; group: SupplyGroup; unit: SupplyUnit; minimum: number | null; stock: number | null; capacityMl: number | null; packSize: number; note: string; estimated: boolean };
 export type SupplyMovement = { id: string; supplyId: string; action: 'entrada' | 'salida' | 'conteo'; quantity: number; before: number | null; after: number; responsible: string; note: string; estimated: boolean; at: string };
-export const unitLabel = (unit: SupplyUnit) => ({ porcion: 'porciones', bolsa: 'bolsas', caja: 'cajas', botella: 'botellas', unidad: 'unidades', paquete: 'paquetes', ml: 'ml' })[unit];
+export const unitLabel = (unit: SupplyUnit) => ({ porcion: 'porciones', bolsa: 'bolsas', caja: 'cajas', botella: 'botellas', unidad: 'unidades', paquete: 'paquetes', ml: 'ml', sobre:'sobres' })[unit];
 export function initialSupplies(): Supply[] {
   const items: Supply[] = [];
   const add = (code: string, name: string, group: SupplyGroup, unit: SupplyUnit, capacityMl: number | null = null, packSize = 1, note = '') => items.push({ id: code, name, group, unit, capacityMl, packSize, note, minimum: null, stock: null, estimated: false });
   ['Frutos rojos', 'Mango', 'Piña', 'Papaya norteña', 'Papaya arequipeña', 'Fresa'].forEach((name, i) => add(`fruta-${i}`, name, 'Frutas congeladas', 'porcion'));
-  ['Café', 'Azúcar', 'Estevia', 'Matcha', 'Hielo'].forEach((name, i) => add(`insumo-${i}`, name, 'Insumos', 'bolsa'));
+  ['Café', 'Azúcar', 'Stevia', 'Matcha', 'Hielo'].forEach((name, i) => add(`insumo-${i}`, name, 'Insumos', i===1||i===2?'sobre':'bolsa',null,i===1?500:i===2?100:1,i===1?'Bolsa de 500 sobres de 5 g. Control por sobres.':i===2?'Bolsa de 100 sobres de 1 g. Control por sobres.':''));
   add('flores', 'Flores comestibles', 'Insumos', 'caja');
   ['Manzana', 'Naranja', 'Piña', 'Fresa'].forEach((name, i) => add(`deshidratada-${i}`, `${name} deshidratada`, 'Insumos', 'bolsa'));
   ['Bella Durmiente', 'Herbalito de eucalipto', 'Taza de Amor', 'Bombón como tú', 'Kuyay', 'Qori'].forEach((name, i) => add(`infusion-${i}`, `Infusión ${name}`, 'Insumos', 'bolsa', null, 1, 'Control por bolsas. Presentación interna pendiente de confirmar.'));
@@ -19,7 +20,7 @@ export function initialSupplies(): Supply[] {
   add('leche-deslactosada', 'Leche deslactosada', 'Insumos', 'bolsa', 1125);
   add('agua-con-gas', 'Agua con gas · vidrio', 'Bebidas', 'botella', 355);
   add('agua-sin-gas', 'Agua sin gas · vidrio', 'Bebidas', 'botella', 355);
-  ['Chill Out', 'Sunset Fizz', 'Emoliente'].forEach((name, i) => add(`kombucha-${i}`, `Kombucha ${name}`, 'Bebidas', 'botella', 355));
+  add('kombuchas','Kombuchas','Bebidas','botella',355);
   add('kola', 'Kola Escocesa · plástico', 'Bebidas', 'botella', 500);
   add('cajas-pequenas', 'Cajas pequeñas', 'Empaques', 'unidad', null, 1000);
   add('cajas-grandes', 'Cajas grandes', 'Empaques', 'unidad', null, 1000);
@@ -32,7 +33,7 @@ export function supplyAlert(item: Supply, inclusive = false): 'sin conteo' | 'ag
   if (item.minimum === null) return 'sin mínimo';
   return (inclusive ? item.stock <= item.minimum : item.stock < item.minimum) ? 'bajo mínimo' : 'disponible';
 }
-export const lowSupplies = (items: Supply[], inclusive = false) => items.filter(item => ['agotado', 'bajo mínimo'].includes(supplyAlert(item, inclusive)));
+export const lowSupplies = (items: Supply[], inclusive = false) => items.filter(item => item.active!==false&&['agotado', 'bajo mínimo'].includes(supplyAlert(item, inclusive)));
 
 const whole = (value: unknown, label: string, min = 0): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > 1_000_000_000) throw new Error(`${label}: ingresa un número entero válido, mínimo ${min}.`);
@@ -57,8 +58,15 @@ export function executeSupplyCommand(original: State, command: Command): State {
     const capacityMl = command.capacityMl == null ? null : whole(command.capacityMl, 'Capacidad', 1);
     if (unit === 'ml' && capacityMl === null) throw new Error('Indica la capacidad del recipiente en ml.');
     const packSize = command.packSize == null ? 1 : whole(command.packSize, 'Unidades por paquete', 1);
-    if (packSize !== 1 && group !== 'Empaques') throw new Error('La conversión por millar solo corresponde a empaques.');
+    if (packSize !== 1 && group !== 'Empaques' && !(group==='Insumos'&&unit==='sobre')) throw new Error('La presentación por paquete solo se admite para empaques y bolsas de sobres.');
     s.supplies.push({ id: crypto.randomUUID(), name, group, unit, stock: null, minimum: command.minimum == null ? null : whole(command.minimum, 'Mínimo'), capacityMl, packSize, note: typeof command.note === 'string' ? command.note.slice(0, 500) : '', estimated: false });
+  } else if(command.type==='supplyStatus'){
+    if(!item||typeof command.active!=='boolean')throw new Error('Estado de insumo inválido.');
+    if(command.active&&item.mergedInto)throw new Error('Este producto ya fue unificado. Usa Kombuchas.');
+    item.active=command.active;
+  } else if(command.type==='supplyDelete'){
+    const reason=supplyDeletionReason(s,String(command.supplyId));if(reason)throw new Error(reason);
+    s.supplies=s.supplies.filter(i=>i.id!==command.supplyId);
   } else if (command.type === 'supplyUpdate') {
     if (!item) throw new Error('Insumo inválido.');
     item.minimum = command.minimum == null ? null : whole(command.minimum, 'Mínimo');
@@ -67,6 +75,7 @@ export function executeSupplyCommand(original: State, command: Command): State {
     item.note = typeof command.note === 'string' ? command.note.slice(0, 500) : '';
   } else if (command.type === 'supplyMove') {
     if (!item) throw new Error('Insumo inválido.');
+
     const action = command.action as SupplyMovement['action'];
     if (!['entrada', 'salida', 'conteo'].includes(action)) throw new Error('Movimiento inválido.');
     const responsible = text(command.responsible, 'Responsable', 80);
@@ -77,10 +86,12 @@ export function executeSupplyCommand(original: State, command: Command): State {
       quantity = Math.round(item.capacityMl * command.percent / 100); estimated = true;
     } else quantity = whole(command.quantity, 'Cantidad', action === 'conteo' ? 0 : 1);
     if (command.byPack === true) {
-      if (item.group !== 'Empaques' || action !== 'entrada') throw new Error('Los millares solo se usan al ingresar empaques.');
+      if ((item.group !== 'Empaques'&&item.unit!=='sobre') || action !== 'entrada' || item.packSize<=1) throw new Error('La entrada por presentación requiere un empaque o una bolsa de sobres.');
       quantity = whole(quantity * item.packSize, 'Cantidad total', 1);
     }
     if (action !== 'conteo' && item.stock === null) throw new Error('Registra primero el conteo inicial de este insumo.');
+    if(item.mergedInto)throw new Error('Este producto fue unificado. Registra el movimiento en Kombuchas.');
+    if(item.active===false&&(action==='entrada'||action==='conteo'&&quantity>(item.stock??0)))throw new Error('El producto está desactivado para nuevos ingresos.');
     const before = item.stock;
     const after = action === 'conteo' ? quantity : action === 'entrada' ? before! + quantity : before! - quantity;
     if (after < 0) throw new Error('No hay suficiente stock para ese retiro.');
@@ -105,10 +116,13 @@ export function validateSupplyBackup(items: unknown, movements: unknown): { supp
     if (!value || typeof value !== 'object' || typeof value.id !== 'string' || !value.id || ids.has(value.id) || !SUPPLY_GROUPS.includes(value.group) || !SUPPLY_UNITS.includes(value.unit)) throw new Error('El respaldo de insumos no es válido.');
     ids.add(value.id);
     const item: Supply = { id: value.id, name: text(value.name, 'Nombre'), group: value.group, unit: value.unit, minimum: value.minimum === null ? null : whole(value.minimum, 'Mínimo'), stock: value.stock === null ? null : whole(value.stock, 'Stock'), capacityMl: value.capacityMl === null ? null : whole(value.capacityMl, 'Capacidad', 1), packSize: whole(value.packSize, 'Presentación', 1), note: typeof value.note === 'string' ? value.note.slice(0, 500) : '', estimated: value.estimated === true };
+    if(value.active!==undefined){if(typeof value.active!=='boolean')throw new Error('Estado de insumo inválido.');item.active=value.active;}
+    if(value.mergedInto!==undefined){if(typeof value.mergedInto!=='string'||!value.mergedInto)throw new Error('Fusión inválida.');item.mergedInto=value.mergedInto;}
     if (item.group === 'Frutas congeladas' && item.unit !== 'porcion') throw new Error('Las frutas se cuentan por porciones.');
     if (item.unit === 'ml' && (!item.capacityMl || (item.stock !== null && item.stock > item.capacityMl))) throw new Error('Contenido líquido inválido.');
     return item;
   });
+  for(const item of supplies){if(item.mergedInto&&(item.active!==false||item.mergedInto===item.id||!supplies.some(target=>target.id===item.mergedInto&&!target.mergedInto)))throw new Error('Unificación inválida.');}
   const movementIds = new Set<string>();
   const supplyMovements = movements.map((m: SupplyMovement) => {
     if (!m || typeof m.id !== 'string' || !m.id || movementIds.has(m.id) || !ids.has(m.supplyId) || !['entrada', 'salida', 'conteo'].includes(m.action) || typeof m.at !== 'string' || !Number.isFinite(Date.parse(m.at))) throw new Error('El historial de insumos no es válido.');

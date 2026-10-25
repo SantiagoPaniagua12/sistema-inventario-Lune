@@ -12,7 +12,7 @@ async function main(){
   const result=await getPgPool().query("SELECT auth_id,nombre FROM perfiles_acceso WHERE rol='admin' AND activo AND NOT cambiar_password AND email=$1",['lunealtapasteleria@gmail.com']);
   if(result.rowCount!==1)throw new Error('No se encontró la administración autorizada.');
   const admin=result.rows[0];
-  const after=await mutatePostgres({type:'createProduct',revision:before.revision,name,category:'Viennoiserie',yield:1,minimum:1,reserveMinimum:null},{id:admin.auth_id,name:admin.nombre,role:'admin',mustChangePassword:false});
+  const after=await mutatePostgres({type:'createProduct',revision:before.revision,name,category:'Bollería',yield:1,minimum:1,reserveMinimum:null},{id:admin.auth_id,name:admin.nombre,role:'admin',mustChangePassword:false});
   assert.equal(after.products.length,before.products.length+1);
   assert.deepEqual(after.lots,before.lots);assert.deepEqual(after.movements,before.movements);
   assert.deepEqual(after.supplies,before.supplies);assert.deepEqual(after.supplyMovements,before.supplyMovements);

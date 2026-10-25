@@ -8,7 +8,7 @@ export async function readSupplies(client: PoolClient): Promise<{ supplies: Supp
   const items = await client.query('SELECT * FROM insumos ORDER BY categoria,nombre');
   const history = await client.query('SELECT * FROM movimientos_insumos ORDER BY orden DESC');
   return {
-    supplies: items.rows.map(i => ({ id: i.id_insumo, name: i.nombre, group: i.categoria, unit: i.unidad, minimum: i.stock_minimo, stock: i.stock, capacityMl: i.capacidad_ml, packSize: i.unidades_por_paquete, note: i.observaciones, estimated: i.estimado })),
+    supplies: items.rows.map(i => ({ id: i.id_insumo, name: i.nombre, group: i.categoria, unit: i.unidad, minimum: i.stock_minimo, stock: i.stock, capacityMl: i.capacidad_ml, packSize: i.unidades_por_paquete, note: i.observaciones, estimated: i.estimado, ...(i.activo===undefined?{}:{active:i.activo}), ...(i.fusionado_en?{mergedInto:i.fusionado_en}:{}) })),
     supplyMovements: history.rows.map(m => ({ id: m.id_movimiento, supplyId: m.id_insumo, action: m.tipo, quantity: m.cantidad, before: m.stock_anterior, after: m.stock_posterior, responsible: m.responsable, note: m.motivo, estimated: m.estimado, at: new Date(m.creado_en).toISOString() })),
   };
 }
@@ -20,6 +20,8 @@ export async function seedSupplies(client: PoolClient) {
   for (const item of initialSupplies()) await insertSupply(client, item, true);
 }
 export async function persistSupplyCommand(client: PoolClient, before: State, after: State, command: Command) {
+  if(command.type==='supplyDelete'){await client.query('SELECT eliminar_insumo_sin_historial($1)',[command.supplyId]);return;}
+  if(command.type==='supplyStatus'){const item=after.supplies!.find(i=>i.id===command.supplyId)!;await client.query('UPDATE insumos SET activo=$1 WHERE id_insumo=$2',[item.active!==false,item.id]);return;}
   if (command.type === 'supplyCreate') {
     const added = after.supplies!.find(i => !before.supplies?.some(x => x.id === i.id));
     if (!added) throw new Error('No se encontró el nuevo insumo.');

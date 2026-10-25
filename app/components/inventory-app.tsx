@@ -17,6 +17,9 @@ import {OperationDialog,isOperationKind,type OperationKind} from './operation-di
 import {useClosingDraft} from '@/app/hooks/use-closing-draft';
 import {CloseShiftDialog,closingFingerprint} from './close-shift-dialog';
 
+import {closingCounts,displayQuantity,productDeletionReason,reserveQuantity} from '@/lib/catalog';
+import {ManualCountInput} from './manual-count-input';
+import {CatalogActions} from './catalog-actions';
 type View = InventorySection;
 type Modal = OperationKind | 'product' | 'createProduct' | 'restore' | null;
 const icons = { 'Turno actual': LayoutDashboard, 'Reserva congelada': Snowflake, Historial: History, Productos: Settings2, 'Insumos y bebidas': Boxes, Limpieza: SprayCan, 'Ventas por turno': BarChart3, 'Salidas al mostrador':ArrowUpRight, 'Alertas de inventario':Bell, 'Importar Excel':Upload };
@@ -44,6 +47,7 @@ export default function Home({actor}:{actor:Actor}) {
   const [selected, setSelected] = useState('p1');
   const [filter, setFilter] = useState('Todos');
   const [query, setQuery] = useState('');
+  const [showInactive,setShowInactive]=useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -79,11 +83,11 @@ export default function Home({actor}:{actor:Actor}) {
   const active = state?.shifts.find(s => s.status === 'open');
   useEffect(()=>{if(closeConfirmation&&closeConfirmation.shiftId!==active?.id)setCloseConfirmation(null);},[active?.id,closeConfirmation]);
   const draft=useClosingDraft(active?.id,waiter,actor.id);
-  const counts=draft.counts;
+  const counts=closingCounts(active?.rows??[],draft.counts);
   const latest = state?.shifts.at(-1);
   const historyShifts=state?allSalesShifts(state):[];
   const displayed = view === 'Historial' ? historyShifts.find(s => s.id === historyId) : active ?? latest;
-  const products = state?.products.filter(p => (filter === 'Todos' || p.category === filter) && p.name.toLowerCase().includes(query.toLowerCase())) ?? [];
+  const products = state?.products.filter(p => (view==='Productos'?(p.active!==false||admin&&showInactive):view==='Turno actual'||view==='Historial'?!!displayed?.rows.some(row=>row.productId===p.id):p.active!==false||!!state&&reserveQuantity(state,p.id)>0) && (filter === 'Todos' || p.category === filter) && p.name.toLowerCase().includes(query.toLowerCase())) ?? [];
   const chosen = state?.products.find(p => p.id === selected);
   const rows = displayed?.rows ?? [];
   const historicalMovements = state?.movements.filter(m => m.shiftId === historyId).slice(0, 100) ?? [];
@@ -97,7 +101,8 @@ export default function Home({actor}:{actor:Actor}) {
     setClosingBusy(true);setError('');
     try{
       if(!await draft.flush()){setError('Primero guarda o revisa los conteos pendientes.');return;}
-      const snapshot=draft.getSnapshot();
+      const savedSnapshot=draft.getSnapshot();
+      const snapshot={...savedSnapshot,counts:closingCounts(active.rows,savedSnapshot.counts)};
       if(!active.rows.every(row=>{const raw=snapshot.counts[row.productId];const value=Number(raw);return raw!==undefined&&raw!==''&&Number.isSafeInteger(value)&&value>=0&&value<=available(row);})){setError('Completa los conteos pendientes y revisa las cantidades antes de cerrar.');return;}
       setCloseConfirmation({shiftId:active.id,counts:{...snapshot.counts}});
     }finally{setClosingBusy(false);}
@@ -108,7 +113,8 @@ export default function Home({actor}:{actor:Actor}) {
     setClosingBusy(true);setError('');
     try{
       if(!await draft.flush()){setError('Hay conteos pendientes de guardar o revisar. Vuelve al conteo para resolverlos.');return;}
-      const snapshot=draft.getSnapshot();
+      const savedSnapshot=draft.getSnapshot();
+      const snapshot={...savedSnapshot,counts:closingCounts(active.rows,savedSnapshot.counts)};
       if(!active.rows.every(row=>{const raw=snapshot.counts[row.productId];const value=Number(raw);return raw!==undefined&&raw!==''&&Number.isSafeInteger(value)&&value>=0&&value<=available(row);})){setError('Hay cantidades pendientes o por revisar. Vuelve al conteo antes de cerrar.');return;}
       if(closingFingerprint(active,snapshot.counts)!==closingFingerprint(active,closeConfirmation.counts)){
         setCloseConfirmation({shiftId:active.id,counts:{...snapshot.counts}});setError('Los conteos se actualizaron desde otra sesión. Revisa el nuevo resumen antes de confirmar.');return;
@@ -184,7 +190,7 @@ export default function Home({actor}:{actor:Actor}) {
          {notice && <div role="status" className="alert success"><Check size={17}/>{notice}<button onClick={() => setNotice('')} aria-label="Cerrar aviso"><X size={16}/></button></div>}
         {state&&<StockNotice state={state} onOpen={()=>setView('Alertas de inventario')}/>}
         {!state ? <div className="empty">Cargando inventario… {error && <button onClick={refresh}>Reintentar</button>}</div> : <>
-        {view === 'Reserva congelada' && cook && <div className="reserve-mode tabs" aria-label="Tipo de reserva"><button className={reserveMode==='produccion'?'selected':''} onClick={()=>setReserveMode('produccion')}>Postres y viennoiserie</button><button className={reserveMode==='frutas'?'selected':''} onClick={()=>setReserveMode('frutas')}>Frutas por porciones</button></div>}
+        {view === 'Reserva congelada' && cook && <div className="reserve-mode tabs" aria-label="Tipo de reserva"><button className={reserveMode==='produccion'?'selected':''} onClick={()=>setReserveMode('produccion')}>Postres y bollería</button><button className={reserveMode==='frutas'?'selected':''} onClick={()=>setReserveMode('frutas')}>Frutas por porciones</button></div>}
         {view === 'Reserva congelada' && cook && reserveMode === 'frutas' && <SuppliesWorkspace actor={actor} key="frutas" state={state} groups={['Frutas congeladas']} busy={interactionLocked} error={error} onCommand={command}/>}
         {view === 'Insumos y bebidas' && <SuppliesWorkspace actor={actor} key="insumos" state={state} groups={['Insumos','Bebidas','Empaques','Preparados líquidos','Cocina']} busy={interactionLocked} error={error} onCommand={command}/>}
         {view === 'Limpieza' && <SuppliesWorkspace actor={actor} key="limpieza" state={state} groups={['Limpieza']} busy={interactionLocked} error={error} onCommand={command}/>}
@@ -202,16 +208,16 @@ export default function Home({actor}:{actor:Actor}) {
           {view==='Historial'&&displayed?.id.startsWith('excel:')&&<p className="alert warning">Archivo histórico de Excel. Solo muestra los postres importados y no modifica el saldo del mostrador ni la reserva actual.</p>}
           <section className="panel"><div className="panel-heading"><div><h2>Control del mostrador <span className={active && view === 'Turno actual' ? 'pill green' : 'pill'}>{active && view === 'Turno actual' ? 'En curso' : displayed ? 'Cerrado' : 'Sin turno'}</span></h2><p>{displayed ? `${fmt(displayed.date)} · Turno ${displayed.period.toLowerCase()} · Responsables: ${shiftLabel(displayed)}` : 'Abre el primer turno e ingresa el conteo inicial del mostrador.'}</p></div>{active && view === 'Turno actual' && waiter && <div className="actions"><button className="primary" disabled={interactionLocked} onClick={() => show('replenish')}><Plus size={16}/>Ingresar al mostrador</button></div>}</div>
           <Toolbar filter={filter} setFilter={setFilter} query={query} setQuery={setQuery}/>
-           <div className="table-wrap" role="region" aria-label="Tabla de control del mostrador" tabIndex={0}><table><thead><tr><th scope="col">PRODUCTO</th><th scope="col">ENTRADA</th><th scope="col">INGRESOS</th><th scope="col">STOCK AL CIERRE</th><th scope="col">VENTA CALC.</th>{waiter && <th scope="col">CORRECCIONES</th>}</tr></thead><tbody>{products.map(p => {
+           <div className="table-wrap" role="region" aria-label="Tabla de control del mostrador" tabIndex={0}><table><thead><tr><th scope="col">PRODUCTO</th><th scope="col">ENTRADA</th><th scope="col">INGRESOS</th><th scope="col">SALIDA</th><th scope="col">VENTA CALC.</th>{waiter && <th scope="col">CORRECCIONES</th>}</tr></thead><tbody>{products.map(p => {
             const row = rows.find(r => r.productId === p.id); const input = counts[p.id]; const value = input !== undefined && input !== '' ? Number(input) : null;
             const invalid = value !== null && row && (value < 0 || !Number.isInteger(value) || value > available(row));
             const calculated = row ? displayed?.status === 'closed' ? sales(row) : value === null ? null : available(row)-value : null;
              const belowMinimum = row && (displayed?.status === 'closed' ? (row.closing ?? 0) : value ?? available(row)) < p.minimum;
-             return <tr key={p.id}><td><div className="product-cell"><ProductPhoto name={p.name} category={p.category}/><div><strong>{p.name}</strong><small>Unidades{belowMinimum && <span className="stock-warning"> · Bajo el mínimo</span>}</small></div></div></td><td>{row?.opening ?? '—'}</td><td className="incoming">{row ? `+${row.incoming}` : '—'}</td><td>{active && view === 'Turno actual' && waiter && row ? <input className={invalid ? 'count invalid' : 'count'} type="number" min="0" max={available(row)} step="1" aria-label={`Stock al cierre de ${p.name}`} disabled={interactionLocked} placeholder="Contar" value={input ?? ''} onChange={e => draft.setCount(p.id,e.target.value)}/> : row?.closing ?? '—'}</td><td className={invalid ? 'invalid-text' : 'sale'}>{calculated ?? '—'}</td>{waiter && <td>{row && displayed && <ShiftCorrection state={state} shift={displayed} row={row} product={p} busy={interactionLocked} onSave={command}/>}</td>}</tr>;
+             return <tr key={p.id}><td><div className="product-cell"><ProductPhoto name={p.name} category={p.category}/><div><strong>{p.name}</strong><small>Unidades{belowMinimum && <span className="stock-warning"> · Bajo el mínimo</span>}</small></div></div></td><td>{row?.opening ?? '—'}</td><td className="incoming">{row ? `+${row.incoming}` : '—'}</td><td>{active && view === 'Turno actual' && waiter && row ? <ManualCountInput className={invalid ? 'count invalid' : 'count'} aria-label={`Salida de ${p.name}`} title={displayQuantity(row)===0?'Sin unidades en el mostrador':'Unidades que quedan al terminar el turno'} disabled={interactionLocked||displayQuantity(row)===0} placeholder="Contar" value={input ?? ''} onChange={e => draft.setCount(p.id,e.target.value)}/> : row?.closing ?? '—'}</td><td className={invalid ? 'invalid-text' : 'sale'}>{calculated ?? '—'}</td>{waiter && <td>{row && displayed && <ShiftCorrection state={state} shift={displayed} row={row} product={p} busy={interactionLocked} onSave={command}/>}</td>}</tr>;
           })}</tbody></table>{products.length === 0 && <div className="empty">No hay productos con esa búsqueda.</div>}</div>
-          <div className="table-footer"><span>{products.length} productos · Todas las cantidades en unidades</span><span>Entrada + ingresos − cierre = venta calculada{total('waste') > 0 && ` (se descuentan ${total('waste')} unidades de ajustes anteriores)`}</span></div>
+          <div className="table-footer"><span>{products.length} productos · Todas las cantidades en unidades</span><span>Entrada + ingresos − salida = venta calculada{total('waste') > 0 && ` (se descuentan ${total('waste')} unidades de ajustes anteriores)`}</span></div>
           </section>
-          {active && view === 'Turno actual' && waiter && <section className="closing-bar"><div><strong>Cuenta y cierra el turno.</strong><p>Los conteos se guardan automáticamente, aunque cierres sesión.</p><p className={`draft-status ${draft.status}`} role="status" aria-live="polite">{draftLabel}</p>{draft.error&&<p className="invalid-text">{draft.error}</p>}</div><div className="closing-team"><strong>Responsables</strong><br/>{shiftLabel(active)}</div><span className="count-progress">{counted}/{state.products.length} contados</span><button className="primary" disabled={interactionLocked||!validCounts||draft.status==='loading'||draft.conflicts.length>0} onClick={()=>void closeShift()}><Check size={17}/>{closingBusy?'Guardando…':'Cerrar turno'}</button></section>}
+          {active && view === 'Turno actual' && waiter && <section className="closing-bar"><div><strong>Cuenta y cierra el turno.</strong><p>Los conteos se guardan automáticamente, aunque cierres sesión.</p><p className={`draft-status ${draft.status}`} role="status" aria-live="polite">{draftLabel}</p>{draft.error&&<p className="invalid-text">{draft.error}</p>}</div><div className="closing-team"><strong>Responsables</strong><br/>{shiftLabel(active)}</div><span className="count-progress">{counted}/{active.rows.length} contados</span><button className="primary" disabled={interactionLocked||!validCounts||draft.status==='loading'||draft.conflicts.length>0} onClick={()=>void closeShift()}><Check size={17}/>{closingBusy?'Guardando…':'Cerrar turno'}</button></section>}
           <p className="footnote"><CircleHelp size={15}/>La venta calculada incluye las unidades pagadas por trabajadores. La conexión con caja permitirá comparar los registros.</p>
            {view === 'Historial' && admin && <section className="panel movement-panel"><div className="panel-heading"><div><h2>Movimientos del turno</h2><p>Producción y unidades retiradas durante el turno seleccionado.</p></div></div><div className="table-wrap" role="region" aria-label="Movimientos del turno" tabIndex={0}><table><thead><tr><th>FECHA · HORA</th><th>PRODUCTO</th><th>MOVIMIENTO</th><th>CANTIDAD</th><th>DETALLE / RESPONSABLE</th></tr></thead><tbody>{historicalMovements.map(m => <tr key={m.id}><td>{new Date(m.at).toLocaleString('es-PE',{timeZone:'America/Lima'})}</td><td>{state.products.find(p => p.id === m.productId)?.name}</td><td>{m.type === 'Merma de mostrador' ? 'Ajuste histórico' : m.type}</td><td>{m.quantity}</td><td className="detail-cell">{m.note || '—'}<small>{m.responsibles?.join(', ')??m.responsible}</small></td></tr>)}</tbody></table>{!historicalMovements.length && <div className="empty">{historyId ? 'Este turno no tiene movimientos asociados.' : 'Selecciona un cierre para consultar sus movimientos.'}</div>}</div></section>}
            {view === 'Historial' && admin && unassignedMovements.length > 0 && <details className="panel legacy-movements"><summary>Movimientos sin turno asociado ({unassignedMovements.length})</summary><p className="legacy-note">Incluye producción fuera de turno y registros previos a esta versión. No se asignan automáticamente para evitar atribuciones incorrectas.</p><div className="table-wrap" role="region" aria-label="Movimientos sin turno asociado" tabIndex={0}><table><thead><tr><th>FECHA · HORA</th><th>PRODUCTO</th><th>MOVIMIENTO</th><th>CANTIDAD</th><th>DETALLE / RESPONSABLE</th></tr></thead><tbody>{unassignedMovements.slice(0, 100).map(m => <tr key={m.id}><td>{new Date(m.at).toLocaleString('es-PE', { timeZone: 'America/Lima' })}</td><td>{state.products.find(p => p.id === m.productId)?.name}</td><td>{m.type === 'Merma de mostrador' ? 'Ajuste histórico' : m.type}</td><td>{m.quantity}</td><td className="detail-cell">{m.note || '—'}<small>{m.responsibles?.join(', ')??m.responsible}</small></td></tr>)}</tbody></table></div></details>}
@@ -233,9 +239,9 @@ export default function Home({actor}:{actor:Actor}) {
           </section><p className="footnote">{!waiter?'Registra la producción y consulta las salidas al mostrador.':active ? 'Cada retiro se registra en el turno abierto.' : 'Abre un turno para retirar unidades de producción.'}</p>
         </>}
         {view === 'Productos' && <>
-          <section className="panel"><div className="panel-heading"><div><h2>Catálogo de productos</h2><p>Todos los productos se cuentan por unidades. Ajusta los nombres y mínimos.</p></div><span className="pill">{state.products.length} productos</span></div>
+          <section className="panel"><div className="panel-heading"><div><h2>Catálogo de productos</h2><p>Todos los productos se cuentan por unidades. Ajusta los nombres, mínimos y disponibilidad.</p></div><label className="check-label"><input type="checkbox" checked={showInactive} onChange={e=>setShowInactive(e.target.checked)}/>Mostrar desactivados</label></div>
             <Toolbar filter={filter} setFilter={setFilter} query={query} setQuery={setQuery}/>
-            <div className="table-wrap" role="region" aria-label="Catálogo de productos" tabIndex={0}><table><thead><tr><th>PRODUCTO</th><th>CATEGORÍA</th><th>MÍNIMO MOSTRADOR</th><th>MÍNIMO RESERVA</th><th><span className="sr-only">Acciones</span></th></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><strong>{p.name}</strong></td><td>{p.category}</td><td>{p.minimum} unidades</td><td>{p.reserveMinimum ?? 'Sin definir'}</td><td><button className="text-button" onClick={() => show('product',p.id)}>Editar<ChevronRight size={15}/></button></td></tr>)}</tbody></table>{!products.length && <div className="empty">No hay productos con esa búsqueda.</div>}</div>
+            <div className="table-wrap" role="region" aria-label="Catálogo de productos" tabIndex={0}><table><thead><tr><th>PRODUCTO</th><th>CATEGORÍA</th><th>MÍNIMO MOSTRADOR</th><th>MÍNIMO RESERVA</th><th><span className="sr-only">Acciones</span></th></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><strong>{p.name}</strong>{p.active===false&&<span className="pill">Desactivado</span>}</td><td>{p.category}</td><td>{p.minimum} unidades</td><td>{p.reserveMinimum ?? 'Sin definir'}</td><td><div className="catalog-actions"><button className="text-button" disabled={interactionLocked} onClick={() => show('product',p.id)}>Editar<ChevronRight size={15}/></button><CatalogActions name={p.name} active={p.active!==false} busy={interactionLocked} deleteReason={productDeletionReason(state,p.id)} onSave={command} entity="product" id={p.id}/></div></td></tr>)}</tbody></table>{!products.length && <div className="empty">No hay productos con esa búsqueda.</div>}</div>
           </section>
         </>}
         </>}
@@ -248,7 +254,7 @@ export default function Home({actor}:{actor:Actor}) {
       <form onSubmit={modal==='restore'?restoreData:submit} key={`${modal}-${selected}`}>
         {modal==='restore'?<><p className="form-note">Importa un respaldo JSON exportado por esta aplicación.</p><label>Archivo de respaldo<input type="file" accept=".json,application/json" required onChange={e=>setRestoreFile(e.target.files?.[0]??null)}/></label></>:<>
           <label>Nombre del producto<input name="name" required maxLength={100} defaultValue={modal==='product'?chosen?.name:''}/></label>
-          {modal==='createProduct'&&<label>Categoría<select name="category" value={newCategory} onChange={e=>setNewCategory(e.target.value)}><option>Postres</option><option>Viennoiserie</option></select></label>}
+          {modal==='createProduct'&&<label>Categoría<select name="category" value={newCategory} onChange={e=>setNewCategory(e.target.value)}><option>Postres</option><option>Bollería</option></select></label>}
           <label>Mínimo en mostrador<input name="minimum" type="number" min="0" max="100000" step="1" required defaultValue={modal==='product'?chosen?.minimum:1}/></label>
           <label>Mínimo en reserva congelada (opcional)<input name="reserveMinimum" type="number" min="0" max="100000" step="1" defaultValue={modal==='product'?chosen?.reserveMinimum??'':''} placeholder="Sin definir"/></label>
         </>}
@@ -259,7 +265,7 @@ export default function Home({actor}:{actor:Actor}) {
   </div>;
 }
 function Stat({ label, value, detail, icon }: { label: string; value: number; detail: string; icon: React.ReactNode }) { return <article className="stat"><div><span>{label}</span><span className="stat-icon">{icon}</span></div><strong>{value}<small>uds.</small></strong><p>{detail}</p></article>; }
-function Toolbar({ filter, setFilter, query, setQuery }: { filter: string; setFilter: (v: string) => void; query: string; setQuery: (v: string) => void }) { return <div className="toolbar"><div className="tabs">{['Todos', 'Postres', 'Viennoiserie'].map(item => <button key={item} className={filter === item ? 'selected' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><input type="search" placeholder="Buscar producto…" aria-label="Buscar producto" value={query} onChange={e => setQuery(e.target.value)}/></div>; }
+function Toolbar({ filter, setFilter, query, setQuery }: { filter: string; setFilter: (v: string) => void; query: string; setQuery: (v: string) => void }) { return <div className="toolbar"><div className="tabs">{['Todos', 'Postres', 'Bollería'].map(item => <button key={item} className={filter === item ? 'selected' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><input type="search" placeholder="Buscar producto…" aria-label="Buscar producto" value={query} onChange={e => setQuery(e.target.value)}/></div>; }
 
 function ProductPhoto({ name, category }: { name: string; category: string }) {
   const normalized = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();

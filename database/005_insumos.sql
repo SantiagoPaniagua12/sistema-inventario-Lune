@@ -3,18 +3,20 @@ CREATE TABLE IF NOT EXISTS insumos (
     id_insumo VARCHAR(100) PRIMARY KEY,
     nombre VARCHAR(180) NOT NULL,
     categoria VARCHAR(30) NOT NULL CHECK (categoria IN ('Frutas congeladas','Insumos','Bebidas','Empaques','Preparados líquidos','Limpieza','Cocina')),
-    unidad VARCHAR(12) NOT NULL CHECK (unidad IN ('porcion','bolsa','caja','botella','unidad','paquete','ml')),
+    unidad VARCHAR(12) NOT NULL CHECK (unidad IN ('porcion','bolsa','caja','botella','unidad','paquete','ml','sobre')),
     stock INTEGER CHECK (stock BETWEEN 0 AND 1000000000),
     stock_minimo INTEGER CHECK (stock_minimo BETWEEN 0 AND 1000000000),
     capacidad_ml INTEGER CHECK (capacidad_ml > 0),
     unidades_por_paquete INTEGER NOT NULL DEFAULT 1 CHECK (unidades_por_paquete > 0),
     observaciones TEXT NOT NULL DEFAULT '',
     estimado BOOLEAN NOT NULL DEFAULT FALSE,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    fusionado_en VARCHAR(100) CONSTRAINT insumos_fusion_fk REFERENCES insumos(id_insumo) DEFERRABLE INITIALLY DEFERRED,
     UNIQUE (categoria,nombre),
     CHECK (categoria <> 'Frutas congeladas' OR unidad='porcion'),
     CHECK (categoria <> 'Preparados líquidos' OR unidad='ml'),
     CHECK (unidad <> 'ml' OR (capacidad_ml IS NOT NULL AND (stock IS NULL OR stock <= capacidad_ml))),
-    CHECK (unidades_por_paquete=1 OR categoria='Empaques')
+    CHECK (unidades_por_paquete=1 OR categoria='Empaques' OR (categoria='Insumos' AND unidad='sobre'))
 );
 CREATE TABLE IF NOT EXISTS movimientos_insumos (
     id_movimiento UUID PRIMARY KEY,
