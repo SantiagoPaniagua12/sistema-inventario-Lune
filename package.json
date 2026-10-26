@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test --test-concurrency=1 tests/inventory.test.ts tests/request-origin.test.ts tests/supplies.test.ts tests/reports.test.ts tests/excel-alerts.test.ts tests/connection.test.ts tests/access.test.ts tests/auth-failure.test.ts tests/simple-operations.test.ts tests/closing-drafts.test.ts tests/operation-ui.test.tsx tests/shift-backups.test.ts tests/inventory-visibility.test.tsx tests/catalog.test.tsx",
+    "test": "tsx --test --test-concurrency=1 tests/inventory.test.ts tests/request-origin.test.ts tests/supplies.test.ts tests/reports.test.ts tests/excel-alerts.test.ts tests/connection.test.ts tests/access.test.ts tests/auth-failure.test.ts tests/simple-operations.test.ts tests/closing-drafts.test.ts tests/operation-ui.test.tsx tests/shift-backups.test.ts tests/inventory-visibility.test.tsx tests/catalog.test.tsx tests/manual-numbers.test.tsx",
     "db:features": "tsx scripts/database.ts features",
     "db:check": "tsx scripts/database.ts check",
     "db:setup": "tsx scripts/database.ts setup",
@@ -32,7 +32,8 @@
     "db:beta-test": "tsx scripts/test-beta-operations.ts",
     "backups:setup": "tsx scripts/shift-backup-setup.ts",
     "db:backup-test": "tsx scripts/test-shift-backups.ts",
-    "catalog:update": "tsx scripts/catalog-update.ts"
+    "catalog:update": "tsx scripts/catalog-update.ts",
+    "catalog:salon": "tsx scripts/add-salon-supplies.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",

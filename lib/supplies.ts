@@ -1,13 +1,14 @@
+import {salonSupplies} from './salon-supplies';
 import type { Command, State } from './inventory';
 import {supplyDeletionReason} from './catalog';
 
-export const SUPPLY_GROUPS = ['Frutas congeladas', 'Insumos', 'Bebidas', 'Empaques', 'Preparados líquidos', 'Limpieza', 'Cocina'] as const;
-export const SUPPLY_UNITS = ['porcion', 'bolsa', 'caja', 'botella', 'unidad', 'paquete', 'ml', 'sobre'] as const;
+export const SUPPLY_GROUPS = ['Frutas congeladas', 'Insumos', 'Bebidas', 'Empaques', 'Preparados líquidos', 'Limpieza', 'Cocina', 'Papelería'] as const;
+export const SUPPLY_UNITS = ['porcion', 'bolsa', 'caja', 'botella', 'unidad', 'paquete', 'ml', 'sobre', 'rollo'] as const;
 export type SupplyGroup = typeof SUPPLY_GROUPS[number];
 export type SupplyUnit = typeof SUPPLY_UNITS[number];
 export type Supply = { active?:boolean; mergedInto?:string; id: string; name: string; group: SupplyGroup; unit: SupplyUnit; minimum: number | null; stock: number | null; capacityMl: number | null; packSize: number; note: string; estimated: boolean };
 export type SupplyMovement = { id: string; supplyId: string; action: 'entrada' | 'salida' | 'conteo'; quantity: number; before: number | null; after: number; responsible: string; note: string; estimated: boolean; at: string };
-export const unitLabel = (unit: SupplyUnit) => ({ porcion: 'porciones', bolsa: 'bolsas', caja: 'cajas', botella: 'botellas', unidad: 'unidades', paquete: 'paquetes', ml: 'ml', sobre:'sobres' })[unit];
+export const unitLabel = (unit: SupplyUnit) => ({ porcion: 'porciones', bolsa: 'bolsas', caja: 'cajas', botella: 'botellas', unidad: 'unidades', paquete: 'paquetes', ml: 'ml', sobre:'sobres', rollo:'rollos' })[unit];
 export function initialSupplies(): Supply[] {
   const items: Supply[] = [];
   const add = (code: string, name: string, group: SupplyGroup, unit: SupplyUnit, capacityMl: number | null = null, packSize = 1, note = '') => items.push({ id: code, name, group, unit, capacityMl, packSize, note, minimum: null, stock: null, estimated: false });
@@ -25,6 +26,7 @@ export function initialSupplies(): Supply[] {
   add('cajas-pequenas', 'Cajas pequeñas', 'Empaques', 'unidad', null, 1000);
   add('cajas-grandes', 'Cajas grandes', 'Empaques', 'unidad', null, 1000);
   ['Maracuyá', 'Toffe', 'Extracto de tumbo', 'Jarabe de goma', 'Almíbar de muña', 'Leche condensada'].forEach((name, i) => add(`liquido-${i}`, name, 'Preparados líquidos', 'ml', i === 5 ? 200 : 600));
+  items.push(...salonSupplies());
   return items;
 }
 export function supplyAlert(item: Supply, inclusive = false): 'sin conteo' | 'agotado' | 'bajo mínimo' | 'sin mínimo' | 'disponible' {

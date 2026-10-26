@@ -4,7 +4,7 @@ Aplicación web en Next.js + React + TypeScript, con Supabase Auth y persistenci
 
 La operación simplificada incorpora ingresos de varios productos, consumo automático de los lotes más antiguos, equipos de hasta cuatro mozos, borradores de cierre recuperables y corrección de producción. Consultar [Operación simplificada](docs/OPERACION-SIMPLE.md) para preparar la actualización y usar los nuevos formularios.
 
-La beta 0.2 agrega frutas por porciones, insumos, bebidas, empaques, líquidos, limpieza, PDF de reposición y dashboards de venta calculada. El catálogo nuevo incluye 36 artículos confirmados, sin inventar existencias iniciales ni mínimos. La categoría Cocina admite la futura ampliación de 200 a 240 insumos.
+La beta 0.2 agrega frutas por porciones, insumos, bebidas, empaques, líquidos, limpieza, PDF de reposición y dashboards de venta calculada. El catálogo nuevo incluye 48 artículos confirmados, sin inventar existencias iniciales ni mínimos. La categoría Cocina admite la futura ampliación de 200 a 240 insumos.
 
 También incorpora alertas de todas las secciones y avisos dentro del sistema, mínimos de congelador e importación histórica de Excel con vista previa. Admite los bloques por postre y fechas horizontales de Lune y registros de moldes producidos/usados por turno. Consultar [Alertas e importación de Excel](docs/alertas-e-importacion-excel.md).
 
@@ -13,6 +13,8 @@ También incorpora alertas de todas las secciones y avisos dentro del sistema, m
 La aplicación ya usa Supabase y requiere iniciar sesión con Supabase Auth. El 22 de octubre de 2026 se copiaron y verificaron las 12 tablas de inventario y se añadieron cinco tablas de acceso, sesiones y auditoría. PostgreSQL local se conserva para pruebas. Consulta primero [Acceso y seguridad](docs/ACCESO-Y-SEGURIDAD.md); la preparación de la migración está en [Beta 0.2 y Supabase](docs/supabase-beta-02.md).
 
 Consultar [Catálogo y conteos](docs/CATALOGO-Y-CONTEOS.md) para los cambios de Salida, Bollería, Kombuchas, sobres y administración del catálogo.
+
+Los campos numéricos se editan manualmente sin incrementos por rueda o flechas. Los empaques y la nueva categoría Papelería incorporan los insumos de atención; consulta [Insumos de salón](docs/INSUMOS-DE-SALON.md).
 
 ## Inicio
 

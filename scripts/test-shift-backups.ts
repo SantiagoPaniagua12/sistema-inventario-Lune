@@ -17,7 +17,7 @@ async function main(){
   const globals=globalThis as typeof globalThis&{lunePgPool?:Pool};
   let source:Pool|undefined,target:Pool|undefined,created=false,copyCreated=false;
   async function prepare(pool:Pool,name:string){
-    for(const file of ['schema.sql','002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql','014_respaldos_turno.sql','015_catalogo_operacion.sql'])await pool.query((await readFile(`database/${file}`,'utf8')).replaceAll('public.',`"${name}".`));
+    for(const file of ['schema.sql','002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql','014_respaldos_turno.sql','015_catalogo_operacion.sql','016_insumos_salon.sql'])await pool.query((await readFile(`database/${file}`,'utf8')).replaceAll('public.',`"${name}".`));
   }
   try{
     await base.query(`CREATE SCHEMA "${schema}"`);created=true;

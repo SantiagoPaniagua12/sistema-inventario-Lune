@@ -38,8 +38,8 @@ export function ShiftCorrection({state,shift,row,product,busy,onSave}:{state:Sta
       <div className="modal-header"><h2>Corregir {product.name}</h2><button type="button" className="icon-button" disabled={busy} onClick={()=>setEditing(false)} aria-label="Cerrar corrección">×</button></div>
       <form onSubmit={submit}>
         <p className="form-note">{shift.date} · {shift.period}. La corrección conserva el registro anterior y recalcula las ventas. El cierre corregido será la entrada del siguiente turno abierto.</p>
-        <label>Ingreso total del turno<input autoFocus name="incoming" type="number" required min="0" max="100000" step="1" value={incoming} onChange={event=>setIncoming(event.target.value)}/></label>
-        {shift.status==='closed'?<label>Salida<ManualCountInput name="closing" required defaultValue={row.closing??0}/></label>:<p className="form-note">La salida se puede editar directamente en la tabla antes de cerrar el turno.</p>}
+        <label>Ingreso total del turno<ManualCountInput autoFocus name="incoming" required min="0" max="100000" step="1" value={incoming} onChange={event=>setIncoming(event.target.value)}/></label>
+        {shift.status==='closed'?<label>Salida<ManualCountInput name="closing" min="0" max={row.opening+Number(incoming)-row.waste} step="1" required defaultValue={row.closing??0}/></label>:<p className="form-note">La salida se puede editar directamente en la tabla antes de cerrar el turno.</p>}
         <p className="form-note">Responsables: {shiftLabel(shift)}. El sistema ajustará automáticamente la reserva según el ingreso corregido.</p>
         <label>Motivo<input name="reason" required maxLength={180} placeholder="Explica el error que estás corrigiendo"/></label>
         {error&&<p role="alert" className="invalid-text">{error}</p>}

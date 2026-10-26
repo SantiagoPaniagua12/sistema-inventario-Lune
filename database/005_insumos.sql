@@ -2,8 +2,8 @@
 CREATE TABLE IF NOT EXISTS insumos (
     id_insumo VARCHAR(100) PRIMARY KEY,
     nombre VARCHAR(180) NOT NULL,
-    categoria VARCHAR(30) NOT NULL CHECK (categoria IN ('Frutas congeladas','Insumos','Bebidas','Empaques','Preparados líquidos','Limpieza','Cocina')),
-    unidad VARCHAR(12) NOT NULL CHECK (unidad IN ('porcion','bolsa','caja','botella','unidad','paquete','ml','sobre')),
+    categoria VARCHAR(30) NOT NULL CHECK (categoria IN ('Frutas congeladas','Insumos','Bebidas','Empaques','Preparados líquidos','Limpieza','Cocina','Papelería')),
+    unidad VARCHAR(12) NOT NULL CHECK (unidad IN ('porcion','bolsa','caja','botella','unidad','paquete','ml','sobre','rollo')),
     stock INTEGER CHECK (stock BETWEEN 0 AND 1000000000),
     stock_minimo INTEGER CHECK (stock_minimo BETWEEN 0 AND 1000000000),
     capacidad_ml INTEGER CHECK (capacidad_ml > 0),

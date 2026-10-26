@@ -11,7 +11,7 @@ DO $$ DECLARE c record; BEGIN
   ALTER TABLE public.insumos ADD CONSTRAINT insumos_fusion_fk FOREIGN KEY(fusionado_en) REFERENCES public.insumos(id_insumo) DEFERRABLE INITIALLY DEFERRED;
  END IF;
 END $$;
-ALTER TABLE public.insumos ADD CONSTRAINT insumos_unidad_catalogo CHECK(unidad IN ('porcion','bolsa','caja','botella','unidad','paquete','ml','sobre'));
+ALTER TABLE public.insumos ADD CONSTRAINT insumos_unidad_catalogo CHECK(unidad IN ('porcion','bolsa','caja','botella','unidad','paquete','ml','sobre','rollo'));
 ALTER TABLE public.insumos ADD CONSTRAINT insumos_presentacion_catalogo CHECK(unidades_por_paquete>0 AND (unidades_por_paquete=1 OR categoria='Empaques' OR (categoria='Insumos' AND unidad='sobre')));
 
 CREATE OR REPLACE FUNCTION public.eliminar_producto_sin_historial(producto integer) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$

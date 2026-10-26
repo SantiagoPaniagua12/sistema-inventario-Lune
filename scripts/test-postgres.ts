@@ -1,3 +1,4 @@
+import {addSalonSupplies} from '../lib/salon-supplies-migration';
 import {migrateCatalog} from '../lib/catalog-migration';
 import {readSupplies} from '../lib/supplies-store';
 import {validateSupplyBackup} from '../lib/supplies';
@@ -36,7 +37,7 @@ async function main() {
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '002_control.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '005_insumos.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '007_alertas_excel.sql'), 'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
     const seeder = await isolated.connect();
     try { await seedSupplies(seeder); } finally { seeder.release(); }
     await isolated.query(`INSERT INTO categorias(nombre_categoria) VALUES ('Postres'),('Bollería');
@@ -216,6 +217,24 @@ async function main() {
       const again=await migrateCatalog(migrationClient);assert.equal(again.changed,false);
       assert.deepEqual(await readSupplies(migrationClient),data);await migrationClient.query('ROLLBACK');
     }}finally{await migrationClient.query('ROLLBACK');migrationClient.release();}
+    const salonClient=await isolated.connect();
+    try{
+      await salonClient.query('BEGIN');
+      await salonClient.query((await readFile('database/016_insumos_salon.sql','utf8')).replaceAll('public.',`"${schema}".`));
+      await salonClient.query("DELETE FROM insumos WHERE id_insumo LIKE 'empaque-%' OR id_insumo LIKE 'papeleria-%'");
+      await salonClient.query("INSERT INTO insumos(id_insumo,nombre,categoria,unidad,stock,stock_minimo) VALUES('bolsas-antiguas','Bolsas de papel grandes','Limpieza','unidad',17,5)");
+      await salonClient.query("INSERT INTO movimientos_insumos(id_movimiento,id_insumo,tipo,cantidad,stock_anterior,stock_posterior,responsable) VALUES($1,'bolsas-antiguas','conteo',17,NULL,17,'Shalu')",[crypto.randomUUID()]);
+      const oldHistory=(await salonClient.query("SELECT * FROM movimientos_insumos WHERE id_insumo='bolsas-antiguas'")).rows;
+      const result=await addSalonSupplies(salonClient);assert.equal(result.added.length,11);assert.deepEqual(result.reclassified,['Bolsas de papel grandes']);
+      const reused=(await salonClient.query("SELECT * FROM insumos WHERE id_insumo='bolsas-antiguas'")).rows[0];assert.equal(reused.categoria,'Empaques');assert.equal(reused.stock,17);assert.equal(reused.stock_minimo,5);
+      assert.deepEqual((await salonClient.query("SELECT * FROM movimientos_insumos WHERE id_insumo='bolsas-antiguas'")).rows,oldHistory);
+      assert.equal((await salonClient.query("SELECT count(*)::int n FROM insumos WHERE nombre='Bolsas de papel grandes'")).rows[0].n,1);
+      assert.equal((await salonClient.query("SELECT stock FROM insumos WHERE id_insumo='papeleria-boletas'")).rows[0].stock,null);
+      const again=await addSalonSupplies(salonClient);assert.equal(again.added.length,0);assert.equal(again.reclassified.length,0);
+      const supplyState=await readSupplies(salonClient);validateSupplyBackup(supplyState.supplies,supplyState.supplyMovements);
+      await salonClient.query('ROLLBACK');
+    }finally{await salonClient.query('ROLLBACK');salonClient.release();}
+    console.log('OK: insumos de salón reutilizan productos existentes y conservan conteos, mínimos e historial sin duplicados.');
     s=await getPostgresState();
     console.log('OK: eliminación sin historial, productos desactivados, migración de kombuchas con y sin conteo, sobres conservados e idempotencia.');
     // Copia completa entre dos esquemas temporales: prueba el mismo proceso usado para Supabase.
@@ -228,7 +247,7 @@ async function main() {
     await copyPool.query(await readFile(path.join(process.cwd(),'database','002_control.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','005_insumos.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','007_alertas_excel.sql'),'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
     const targetClient=await copyPool.connect();
     try {
       await targetClient.query('BEGIN');await insertInventorySnapshot(targetClient,snapshot);await verifyInventorySnapshot(targetClient,snapshot);await targetClient.query('COMMIT');
