@@ -97,6 +97,18 @@ export function execute(original: State, c: Command): State {
     if(added.some(name=>team.includes(name)))throw new Error('Ese mozo ya forma parte del turno.');
     if(team.length+added.length>4)throw new Error('Un turno admite como máximo 4 mozos.');
     active.responsibles=[...team,...added];
+  } else if(c.type==='replaceWaiter'){
+    if(!active||c.shiftId!==active.id)throw new Error('Solo puedes cambiar mozos del turno abierto.');
+    const team=shiftTeam(active),outgoing=required(c.outgoing,'Mozo a reemplazar');
+    const replacement=waiterNames([c.replacement])[0];
+    required(c.reason,'Motivo del cambio');
+    const index=team.indexOf(outgoing);
+    if(index<0)throw new Error('El mozo a reemplazar ya no pertenece a este turno. Actualiza los datos.');
+    if(outgoing===replacement)throw new Error('Selecciona un mozo distinto como reemplazo.');
+    if(team.includes(replacement))throw new Error('El reemplazo ya forma parte del turno.');
+    team[index]=replacement;
+    active.responsibles=waiterNames(team,active.period==='Tarde'?2:1);
+    active.responsible=active.responsibles[0];
   } else if (c.type === 'produce') {
     if (!product) throw new Error('Producto inválido.');
     if(product.active===false)throw new Error('El producto está desactivado para nueva producción.');

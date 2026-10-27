@@ -16,6 +16,8 @@ async function main(){
     assert.equal((await pool.query(`SELECT has_function_privilege(current_user,$1,'EXECUTE') AS access`,[signature])).rows[0].access,true);
     for(const role of ['anon','authenticated'])assert.equal((await pool.query(`SELECT has_function_privilege($1,$2,'EXECUTE') AS access`,[role,signature])).rows[0].access,false);
   }
+  for(const [column,allowed] of [['id_usuario',true],['incorporado_en',true],['orden',false],['id_turno',false]] as const)assert.equal((await pool.query("SELECT has_column_privilege(current_user,'public.turno_responsables',$1,'UPDATE') AS allowed",[column])).rows[0].allowed,allowed,column);
+  assert.equal((await pool.query("SELECT has_table_privilege(current_user,'public.turno_responsables','DELETE') AS allowed")).rows[0].allowed,false);
   const counts=(await pool.query(`SELECT (SELECT count(*)::int FROM productos) AS products,(SELECT count(*)::int FROM insumos) AS supplies,(SELECT count(*)::int FROM insumos WHERE stock IS NOT NULL) AS supplies_with_count,(SELECT count(*)::int FROM lotes) AS lots,(SELECT count(*)::int FROM turnos) AS shifts,(SELECT count(*)::int FROM movimiento_inventario) AS inventory_movements,(SELECT count(*)::int FROM movimientos_insumos) AS supply_movements,(SELECT count(*)::int FROM importaciones_excel) AS excel_imports,(SELECT count(*)::int FROM perfiles_acceso) AS access_profiles`)).rows[0];
   const settings=await fetch(`${process.env.SUPABASE_URL}/auth/v1/settings`,{headers:{apikey:process.env.SUPABASE_PUBLISHABLE_KEY!}}).then(r=>r.json());
   assert.equal(settings.disable_signup,true,'public signup must be disabled');

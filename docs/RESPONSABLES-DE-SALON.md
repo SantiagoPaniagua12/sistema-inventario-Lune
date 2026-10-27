@@ -11,3 +11,12 @@ El bloqueo de Santiago se debía a un registro previo marcado como cocina. Se co
 - `npm run db:staff-test` reproduce el problema y verifica las 14 combinaciones de mozo/horario en un esquema PostgreSQL local aislado, además de comprobar idempotencia y protección del historial.
 
 Los datos operativos de producción no se utilizan como prueba de apertura ni cierre.
+## Cambiar un mozo del turno abierto
+
+Salón y Administración pueden usar **Turno actual → Cambiar mozo**. Seleccionan al integrante que no asistió, eligen un reemplazo que no esté en el equipo y escriben el motivo. Se conserva el puesto del integrante sustituido; si era el primero, el nuevo nombre pasa a ser el responsable principal del turno.
+
+El botón funciona también con cuatro integrantes, ya que reemplaza a uno sin aumentar el equipo. Se mantienen los límites de uno a cuatro mozos por mañana y de dos a cuatro por tarde. Los turnos cerrados no se pueden cambiar.
+
+La operación conserva cantidades y borradores de Salida. Los registros anteriores mantienen el equipo declarado al registrarlos; el historial del reemplazo muestra quién salió, quién entró, el motivo y la cuenta que realizó el cambio. Los nuevos ingresos y el cierre usan el equipo actualizado.
+
+Antes de publicar esta función, `npm run staff:replacement-setup -- --apply` prepara exclusivamente el permiso de actualización de integrante y fecha de incorporación en turno_responsables. Guarda una copia privada y verifica que los datos operativos permanezcan iguales. El rol web no recibe permisos para borrar integrantes ni cambiar el orden o el identificador del turno.

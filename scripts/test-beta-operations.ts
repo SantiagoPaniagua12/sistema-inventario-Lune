@@ -38,7 +38,7 @@ async function main(){
     const yesterday=new Date(Date.parse(`${limaDate()}T12:00:00Z`)-86400000).toISOString().slice(0,10);
     await isolated.query("INSERT INTO turnos(fecha,periodo,id_responsable,estado) VALUES($1,'tarde',1,'abierto')",[yesterday]);
     await isolated.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) SELECT 1,id_producto,0 FROM productos');
-    for(const name of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql'])await sql(name);
+    for(const name of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql'])await sql(name);
     const admin:Actor={id:crypto.randomUUID(),name:'Administración',role:'admin',mustChangePassword:false};
     const salon:Actor={id:crypto.randomUUID(),name:'Salón',role:'mozo',mustChangePassword:false};
     const cocina:Actor={id:crypto.randomUUID(),name:'Cocina',role:'cocina',mustChangePassword:false};
@@ -125,8 +125,29 @@ async function main(){
     await assert.rejects(()=>saveClosingDraft({shiftId,fields:[{productId:'1',value:1,version:3}]},salon));
     await assert.rejects(()=>run('open',{date:limaDate(),period:'Tarde',responsibles:['Shalu']}));
     await run('open',{date:limaDate(),period:'Tarde',responsibles:['Shalu','Karla']});
+    const replacementShift=state.shifts.at(-1)!.id;
+    const pendingBefore=await saveClosingDraft({shiftId:replacementShift,fields:[{productId:'1',value:0,version:0}]},salon);
+    const beforeReplace=structuredClone(state);
+    const primaryChange={type:'replaceWaiter',revision:state.revision,shiftId:replacementShift,outgoing:'Shalu',replacement:'Santiago',reason:'No asistió',operationId:crypto.randomUUID()};
+    state=await mutatePostgres(primaryChange,salon);
+    assert.deepEqual(state.shifts.at(-1)!.responsibles,['Santiago','Karla']);assert.equal(state.shifts.at(-1)!.responsible,'Santiago');
+    assert.deepEqual(state.shifts.at(-1)!.rows,beforeReplace.shifts.at(-1)!.rows);assert.deepEqual(state.movements,beforeReplace.movements);assert.deepEqual(state.lots,beforeReplace.lots);assert.deepEqual(state.supplies,beforeReplace.supplies);
+    assert.deepEqual(await getClosingDraft(replacementShift,salon),pendingBefore);
+    const persistedReplace=structuredClone(state);state=await mutatePostgres(primaryChange,salon);assert.deepEqual(state,persistedReplace);
+    await assert.rejects(()=>mutatePostgres({...primaryChange,reason:'Otro motivo'},salon));
+    await assert.rejects(()=>run('replaceWaiter',{shiftId:morning.id,outgoing:'Shalu',replacement:'Nicol',reason:'Cerrado',operationId:crypto.randomUUID()}));
+    await assert.rejects(()=>run('replaceWaiter',{shiftId:replacementShift,outgoing:'Karla',replacement:'Santiago',reason:'Duplicado',operationId:crypto.randomUUID()}));
+    await assert.rejects(()=>run('replaceWaiter',{shiftId:replacementShift,outgoing:'Karla',replacement:'Nicol',reason:'Sin permiso',operationId:crypto.randomUUID()},cocina));
+    const stored=(await isolated.query('SELECT u.nombre_usuario FROM turnos t JOIN usuarios u ON u.id_usuario=t.id_responsable WHERE t.id_turno=$1',[replacementShift])).rows[0];assert.equal(stored.nombre_usuario,'Santiago');
+    const audit=(await isolated.query("SELECT detalle FROM auditoria_acceso WHERE accion='inventory.replaceWaiter'")).rows;assert.equal(audit.length,1);assert.equal(audit[0].detalle.outgoing,'Shalu');assert.equal(audit[0].detalle.replacement,'Santiago');assert(audit[0].detalle.history.note.includes('No asistió'));
+    const racingReplace=await Promise.allSettled(['Nicol','Mapi'].map(name=>mutatePostgres({type:'replaceWaiter',revision:state.revision,shiftId:replacementShift,outgoing:'Karla',replacement:name,reason:'Relevo',operationId:crypto.randomUUID()},salon)));assert.equal(racingReplace.filter(r=>r.status==='fulfilled').length,1);state=await getPostgresState();
+    const keptTeam=structuredClone(state.shifts.at(-1)!.responsibles);
+    await isolated.query(`CREATE FUNCTION reject_team_change() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''Fallo simulado''; END'; CREATE TRIGGER fail_replace BEFORE UPDATE OF id_responsable ON turnos FOR EACH ROW EXECUTE FUNCTION reject_team_change()`);
+    await assert.rejects(()=>run('replaceWaiter',{shiftId:replacementShift,outgoing:'Santiago',replacement:'Diogo',reason:'Rollback',operationId:crypto.randomUUID()}));assert.deepEqual(await getPostgresState(),state);assert.deepEqual((await getPostgresState()).shifts.at(-1)!.responsibles,keptTeam);
+    await isolated.query('DROP TRIGGER fail_replace ON turnos');
+    console.log('OK: reemplazo principal, conservación de conteos/historial, doble envío, concurrencia, permisos, auditoría y rollback del cambio de equipo.');
     const afternoon=await getClosingDraft(state.shifts.at(-1)!.id,salon);
-    assert(afternoon.fields.every(f=>f.value===null));
+    assert(afternoon.fields.every(f=>f.productId==='1'?f.value===0:f.value===null));
     console.log('OK: borradores persisten tras cambio de sesión, CAS impide sobrescrituras, Cocina no escribe, cierre rechaza versiones antiguas y tarde exige2 mozos.');
     await run('supplyMove',{supplyId:'liquido-0',action:'conteo',quantity:600,responsible:'Joel'},cocina);
     await run('supplyMove',{supplyId:'liquido-0',action:'salida',quantity:10,responsible:'Shalu'},salon);
@@ -148,6 +169,13 @@ async function main(){
     const secondPage=await readOperationHistory(new URLSearchParams({cursor:firstPage.nextCursor!}),salon,state);
     assert(secondPage.entries.every(e=>!firstPage.entries.some(f=>f.id===e.id)));
     assert.deepEqual(await getPostgresState(),state);
+    const closeTeam=state.shifts.at(-1)!.responsibles;
+    const pendingClose=await getClosingDraft(replacementShift,salon);
+    const readyClose=await saveClosingDraft({shiftId:replacementShift,fields:pendingClose.fields.map(field=>({...field,value:0}))},salon);
+    await run('close',{counts:Object.fromEntries(readyClose.fields.map(field=>[field.productId,field.value])),draftVersions:Object.fromEntries(readyClose.fields.map(field=>[field.productId,field.version]))});
+    assert.deepEqual(state.shifts.at(-1)!.responsibles,closeTeam);assert.equal(state.shifts.at(-1)!.status,'closed');
+    const closingAudit=(await isolated.query("SELECT detalle FROM auditoria_acceso WHERE accion='inventory.close' ORDER BY id DESC LIMIT 1")).rows[0];assert.deepEqual(closingAudit.detalle.history.responsibles,closeTeam);
+    console.log('OK: el cierre persistido y su auditoría usan el equipo actualizado después del reemplazo.');
     console.log('OK: respuestas por cuenta sin ventas de Cocina ni lotes de Salón; historial y movimientos de insumos filtrados por cuenta autenticada, datos antiguos solo para Administración, filtros protegidos y paginación sin duplicados.');
 
   }finally{

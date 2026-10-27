@@ -6,9 +6,9 @@ import {Plus,Check,X} from 'lucide-react';
 import {limaDate,shiftTeam,type State} from '@/lib/inventory';
 import {COOKS,WAITERS} from '@/lib/staff';
 
-export type OperationKind='open'|'produce'|'replenish'|'addWaiters'|'correctProduction';
-export const isOperationKind=(kind:string|null):kind is OperationKind=>['open','produce','replenish','addWaiters','correctProduction'].includes(kind??'');
-const titles:Record<OperationKind,string>={open:'Abrir turno',produce:'Agregar producción',replenish:'Ingresar al mostrador',addWaiters:'Agregar más mozos',correctProduction:'Corregir producción'};
+export type OperationKind='open'|'produce'|'replenish'|'addWaiters'|'replaceWaiter'|'correctProduction';
+export const isOperationKind=(kind:string|null):kind is OperationKind=>['open','produce','replenish','addWaiters','replaceWaiter','correctProduction'].includes(kind??'');
+const titles:Record<OperationKind,string>={open:'Abrir turno',produce:'Agregar producción',replenish:'Ingresar al mostrador',addWaiters:'Agregar más mozos',replaceWaiter:'Cambiar mozo',correctProduction:'Corregir producción'};
 const dateLabel=(date:string)=>new Date(`${date}T12:00:00-05:00`).toLocaleDateString('es-PE',{dateStyle:'medium',timeZone:'America/Lima'});
 
 export function OperationDialog({kind,state,productId,busy,serverError,onSave,onClose}:{kind:OperationKind;state:State;productId:string;busy:boolean;serverError:string;onSave:(data:Record<string,unknown>,message:string)=>Promise<boolean>;onClose:()=>void}){
@@ -19,6 +19,8 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
   const [quantities,setQuantities]=useState<Record<string,string>>({});
   const [error,setError]=useState('');
   const [lotId,setLotId]=useState('');
+  const [outgoing,setOutgoing]=useState(active?shiftTeam(active)[0]??'':'');
+  const [replacement,setReplacement]=useState('');
   const dialogRef=useRef<HTMLElement>(null);
   const busyRef=useRef(busy);busyRef.current=busy;
   const closeRef=useRef(onClose);closeRef.current=onClose;
@@ -66,6 +68,10 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
         data={type:'open',date:fields.date,period,responsibles:chosen,openings:Object.fromEntries(Object.entries(fields).filter(([key])=>key.startsWith('initial:')).map(([key,value])=>[key.slice(8),Number(value)]))};
         message='Turno abierto. El equipo quedó registrado para los ingresos y el cierre.';
       }else{data={type:'addWaiters',names:chosen};message='Mozos agregados al equipo del turno.';}
+    }else if(kind==='replaceWaiter'){
+      if(!active||!team.includes(outgoing)||!replacement||team.includes(replacement)){setError('Selecciona al mozo del turno y un reemplazo que no esté en el equipo.');return;}
+      if(!String(fields.reason??'').trim()){setError('Escribe el motivo del cambio.');return;}
+      data={type:'replaceWaiter',shiftId:active.id,outgoing,replacement,reason:String(fields.reason).trim()};message='Mozo reemplazado. El cierre usará el equipo actualizado.';
     }else if(kind==='produce'||kind==='replenish'){
       if(!entered.length){setError('Escribe una cantidad en al menos un producto.');return;}
       const invalid=entered.find(item=>!Number.isSafeInteger(item.quantity)||item.quantity<1||item.quantity>100000||(kind==='replenish'&&item.quantity>available(item.productId)));
@@ -91,6 +97,13 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
         <p className="form-note">{kind==='open'?`${period==='Tarde'?'La tarde requiere al menos dos mozos':'La mañana requiere al menos un mozo'}. Máximo cuatro responsables por turno. Los nombres se usarán automáticamente en los ingresos y en el cierre.`:'Todos los integrantes quedarán asociados al turno y al cierre.'}</p>
         {kind==='open'&&(latest?<p className="form-note">La entrada se toma del cierre de {latest.period.toLowerCase()} del {dateLabel(latest.date)}.</p>:<><p className="form-note">Primer turno: cuenta las unidades que ya están en el mostrador.</p><div className="initial-counts">{formProducts.map(product=><label key={product.id}>{product.name}<ManualCountInput name={`initial:${product.id}`} min="0" max="100000" step="1" required defaultValue="0"/></label>)}</div></>)}
       </>}
+      {kind==='replaceWaiter'&&<>
+        <p className="form-note">Equipo actual: <strong>{team.join(', ')||'Sin turno abierto'}</strong>. Puedes reemplazar a quien no asistió mientras el turno esté abierto.</p>
+        <label>Mozo que no asistió<select name="outgoing" required value={outgoing} onChange={event=>setOutgoing(event.target.value)}><option value="" disabled>Selecciona un mozo del turno</option>{team.map(name=><option key={name}>{name}</option>)}</select></label>
+        <label>Mozo que lo reemplaza<select name="replacement" required value={replacement} onChange={event=>setReplacement(event.target.value)}><option value="" disabled>Selecciona al reemplazo</option>{WAITERS.filter(name=>!team.includes(name)).map(name=><option key={name}>{name}</option>)}</select></label>
+        <label>Motivo del cambio<input name="reason" required maxLength={180} placeholder="Ej. No asistió y lo reemplaza otro mozo"/></label>
+        {replacement&&<p className="form-note">Equipo actualizado: <strong>{team.map(name=>name===outgoing?replacement:name).join(', ')}</strong>. Estos nombres se usarán al cerrar el turno. El cambio quedará registrado en el historial.</p>}
+      </>}
       {(kind==='produce'||kind==='replenish')&&<>
         {kind==='produce'?<div className="form-grid"><label>Cocinero<select name="responsible" required defaultValue=""><option value="" disabled>Selecciona tu nombre</option>{COOKS.map(name=><option key={name}>{name}</option>)}</select></label><label>Fecha de producción<input name="date" type="date" required max={limaDate()} defaultValue={limaDate()}/></label></div>:<p className="form-note">Escribe las unidades que ingresan al mostrador. El sistema descontará primero la producción más antigua disponible.</p>}
         <div className="batch-products"><div className={`batch-list-heading ${kind==='produce'?'production-row':''}`}><span>Producto</span>{kind==='replenish'&&<span>Disponibles para ingresar</span>}<span>{kind==='produce'?'Producidas':'A ingresar'}</span></div>{formProducts.map(product=><label className={`batch-product-row ${kind==='produce'?'production-row':''}`} key={product.id}><span>{product.name}</span>{kind==='replenish'&&<span className="batch-stock">{available(product.id)} uds.</span>}<ManualCountInput disabled={kind==='replenish'&&available(product.id)===0} title={kind==='replenish'&&available(product.id)===0?'Sin reserva disponible':undefined} data-product={product.id} aria-label={`${kind==='produce'?'Producción':'Ingreso al mostrador'} de ${product.name}`} min="0" max={kind==='produce'?100000:available(product.id)} step="1" placeholder="0" value={quantities[product.id]??''} onChange={event=>setQuantities(previous=>({...previous,[product.id]:event.target.value}))}/></label>)}</div>
@@ -105,7 +118,7 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
       </>}
       {(error||serverError)&&<div className="alert error" role="alert">{error||serverError}</div>}
       </div>
-      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={onClose}>Cancelar</button><button className="primary" disabled={busy||(kind==='addWaiters'&&maxNames<1)||(kind==='correctProduction'&&!chosenLot)}>{busy?'Guardando…':kind==='produce'?'Guardar producción':kind==='replenish'?'Guardar ingresos':kind==='open'?'Abrir turno':kind==='addWaiters'?'Agregar al turno':'Guardar corrección'}<Check size={16}/></button></div>
+      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={onClose}>Cancelar</button><button className="primary" disabled={busy||(kind==='addWaiters'&&maxNames<1)||(kind==='correctProduction'&&!chosenLot)||(kind==='replaceWaiter'&&(!active||!outgoing||!replacement))}>{busy?'Guardando…':kind==='produce'?'Guardar producción':kind==='replenish'?'Guardar ingresos':kind==='open'?'Abrir turno':kind==='addWaiters'?'Agregar al turno':kind==='replaceWaiter'?'Guardar cambio':'Guardar corrección'}<Check size={16}/></button></div>
     </fieldset></form>
   </section></div>;
 }

@@ -95,7 +95,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
   return pgTransaction(async client => {
     await assertInventoryWritable();
     const before = await readPg(client);
-    const repeated=['produceBatch','replenishBatch','correctProduction','addWaiters'].includes(command.type)&&command.operationId!==undefined;
+    const repeated=['produceBatch','replenishBatch','correctProduction','addWaiters','replaceWaiter'].includes(command.type)&&command.operationId!==undefined;
     const operationId=repeated?String(command.operationId):undefined;
     if(operationId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))throw new AccessError('Identificador de operación inválido.',400);
     const {revision:ignoredRevision,...payload}=command;
@@ -124,7 +124,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     async function recordAudit(persisted:State){
       if(actor){
         const summary=operationSummary(before,persisted,command);
-        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,operationId:command.operationId,area:actor.role,history:summary})]);
+        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,outgoing:command.outgoing,replacement:command.replacement,operationId:command.operationId,area:actor.role,history:summary})]);
       }
       return persisted;
     }
@@ -192,6 +192,15 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
         const user=await responsibleId(client,name,'mostrador');
         await client.query('INSERT INTO turno_responsables(id_turno,id_usuario,orden) VALUES($1,$2,$3)',[active!.id,user,index+1]);
       }
+    } else if(command.type==='replaceWaiter'){
+      const slots=(await client.query('SELECT tr.id_usuario,u.nombre_usuario FROM turno_responsables tr JOIN usuarios u USING(id_usuario) WHERE tr.id_turno=$1 ORDER BY tr.orden',[active!.id])).rows;
+      const outgoing=slots.find(slot=>personKey(slot.nombre_usuario)===personKey(String(command.outgoing)));
+      if(!outgoing)throw new Error('No se encontró el responsable del turno. Actualiza los datos.');
+      const replacement=await responsibleId(client,String(command.replacement),'mostrador');
+      const updated=await client.query('UPDATE turno_responsables SET id_usuario=$1,incorporado_en=CURRENT_TIMESTAMP WHERE id_turno=$2 AND id_usuario=$3',[replacement,active!.id,outgoing.id_usuario]);
+      if(updated.rowCount!==1)throw new Error('El equipo cambió. Actualiza los datos antes de continuar.');
+      const shiftUpdate=await client.query("UPDATE turnos SET id_responsable=(SELECT id_usuario FROM turno_responsables WHERE id_turno=$1 AND orden=1) WHERE id_turno=$1 AND estado='abierto'",[active!.id]);
+      if(shiftUpdate.rowCount!==1)throw new Error('El turno ya está cerrado. No se realizó el cambio.');
     } else if (command.type === 'produce'||command.type==='produceBatch') {
       const oldLots=new Set(before.lots.map(l=>l.id));
       for(const lot of after.lots.filter(l=>!oldLots.has(l.id))){

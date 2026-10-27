@@ -27,6 +27,11 @@ export function authorizeCommand(actor: Actor, command: Command, state: State): 
     try{next.names=waiterNames(command.names);}catch(error){throw new AccessError((error as Error).message,400);}
     next.responsible=shiftTeam(active)[0];
   }
+  else if(command.type==='replaceWaiter'&&salon){
+    if(!active||command.shiftId!==active.id)throw new AccessError('Solo puedes cambiar mozos del turno abierto.',400);
+    next.outgoing=selectedStaff('mozo',command.outgoing);next.replacement=selectedStaff('mozo',command.replacement);
+    next.responsible=shiftTeam(active)[0];delete next.responsibles;
+  }
   else if(command.type==='correctShift'&&salon){
     const shift=state.shifts.find(item=>item.id===command.shiftId);
     if(!shift)throw new AccessError('Selecciona un turno válido.',400);
@@ -44,6 +49,6 @@ export function authorizeCommand(actor: Actor, command: Command, state: State): 
     next.responsible = selectedStaff(actor.role,command.responsible);
   } else if(actor.role==='admin')return command;
   else throw new AccessError();
-  if(['produceBatch','replenishBatch','correctProduction'].includes(command.type)&& (typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId)))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
+  if(['produceBatch','replenishBatch','correctProduction','replaceWaiter'].includes(command.type)&& (typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId)))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
   return next;
 }
