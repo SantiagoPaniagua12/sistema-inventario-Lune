@@ -12,6 +12,12 @@ export function manualNumberMessage(value:string,{min,max,step,decimalPlaces=0}:
  if(!Number.isFinite(amount)||(!decimalPlaces&&!Number.isSafeInteger(amount)))return 'La cantidad no es válida.';
  if(min!==undefined&&amount<Number(min))return `La cantidad mínima es ${min}.`;
  if(max!==undefined&&amount>Number(max))return `La cantidad máxima es ${max}.`;
- if(step!==undefined&&step!=='any'&&Number(step)>0){const units=(amount-Number(min??0))/Number(step);if(Math.abs(units-Math.round(units))>1e-7)return 'Revisa los decimales de la cantidad.';}
+ if(step!==undefined&&step!=='any'&&Number(step)>0){
+  const scale=10**decimalPlaces,scaledStep=Number(step)*scale,scaledMin=Number(min??0)*scale;
+  const units=Number.isInteger(scaledStep)&&Number.isInteger(scaledMin)
+    ? (Math.round(amount*scale)-scaledMin)/scaledStep
+    : (amount-Number(min??0))/Number(step);
+  if(Math.abs(units-Math.round(units))>1e-7)return 'Revisa los decimales de la cantidad.';
+ }
  return '';
 }

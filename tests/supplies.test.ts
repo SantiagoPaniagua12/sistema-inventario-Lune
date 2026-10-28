@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execute, seed, limaDate, type State } from '../lib/inventory';
-import { initialSupplies, lowSupplies, type Supply } from '../lib/supplies';
+import { initialSupplies, lowSupplies, supplyDecimalPlaces, formatSupplyQuantity, type Supply } from '../lib/supplies';
 import { validateBackup } from '../lib/backup';
 import { connectionConfig } from '../lib/connection-config';
 
@@ -78,4 +78,92 @@ test('Supabase exige URI propia, valida TLS y nunca usa las credenciales locales
   const config=connectionConfig({SUPABASE_DATABASE_URL:'postgresql://usuario:prueba@db.example:6543/postgres?sslmode=disable'},'supabase');
   assert.equal(config.max,1);assert.deepEqual(config.ssl,{rejectUnauthorized:true});
   assert(!config.connectionString?.includes('sslmode='));
+});
+
+
+test('las seis infusiones permiten centésimas de bolsa sin cambiar otros insumos',()=>{
+  const items=initialSupplies();
+  assert.deepEqual(items.filter(item=>supplyDecimalPlaces(item)===2).map(item=>item.id),['infusion-0','infusion-1','infusion-2','infusion-3','infusion-4','infusion-5']);
+  for(const item of items.filter(item=>supplyDecimalPlaces(item)===2)){
+    const s=move(seed(),item.id,'conteo',0.5);
+    assert.equal(s.supplies!.find(value=>value.id===item.id)!.stock,0.5);
+    assert.equal(formatSupplyQuantity(item,0.5),'0.50');
+    assert.equal(supplyDecimalPlaces({...item,unit:'unidad'}),0);
+    assert.equal(supplyDecimalPlaces({...item,group:'Cocina'}),0);
+    assert.equal(supplyDecimalPlaces({...item,id:item.id+'\n'}),0);
+  }
+  for(const id of ['insumo-0','insumo-1','fruta-0','cajas-pequenas','liquido-0']){
+    assert.throws(()=>move(seed(),id,'conteo',0.5),/entero/);
+  }
+});
+
+test('conteo, ingreso y retiro de bolsas conservan centésimas exactas y el historial',()=>{
+  let s=move(seed(),'infusion-4','conteo',0.5);
+  s=move(s,'infusion-4','entrada',1);
+  s=move(s,'infusion-4','salida',0.1);
+  assert.equal(s.supplies!.find(item=>item.id==='infusion-4')!.stock,1.4);
+  assert.deepEqual(s.supplyMovements!.slice(0,3).map(m=>[m.action,m.quantity,m.before,m.after]),[
+    ['salida',0.1,1.5,1.4],['entrada',1,0.5,1.5],['conteo',0.5,null,0.5],
+  ]);
+  assert.throws(()=>move(s,'infusion-4','conteo',0.25),/motivo/);
+  s=move(s,'infusion-4','conteo',0.25,{note:'Revisión de la bolsa abierta'});
+  assert.deepEqual(validateBackup(JSON.parse(JSON.stringify(s))),s);
+});
+
+test('sumas y retiros pequeños no acumulan residuos binarios',()=>{
+  let s=move(seed(),'infusion-0','conteo',0.1);
+  s=move(s,'infusion-0','entrada',0.2);
+  assert.equal(s.supplies!.find(item=>item.id==='infusion-0')!.stock,0.3);
+  for(let i=0;i<30;i++)s=move(s,'infusion-0','salida',0.01);
+  assert.equal(s.supplies!.find(item=>item.id==='infusion-0')!.stock,0);
+  assert.throws(()=>move(s,'infusion-0','salida',0.01),/suficiente/);
+  s=move(s,'infusion-0','entrada',0.29);
+  s=move(s,'infusion-0','salida',0.29);
+  assert.equal(s.supplies!.find(item=>item.id==='infusion-0')!.stock,0);
+  assert.deepEqual(validateBackup(s),s);
+});
+
+test('las cantidades fraccionadas validan precisión, límites y conteo inicial',()=>{
+  assert.throws(()=>move(seed(),'infusion-0','entrada',0.01),/conteo inicial/);
+  for(const quantity of [-0.01,0.001,0.301,NaN,Infinity,1_000_000_000.01]){
+    assert.throws(()=>move(seed(),'infusion-0','conteo',quantity),/decimales/);
+  }
+  const s=move(seed(),'infusion-0','conteo',0.5);
+  for(const action of ['entrada','salida'])assert.throws(()=>move(s,'infusion-0',action,0),/mínimo 0.01/);
+  assert.throws(()=>move(s,'infusion-0','salida',0.51),/suficiente/);
+  assert.throws(()=>move(s,'infusion-0','entrada',0.5,{byPack:true}),/presentación/);
+  const max=move(seed(),'infusion-0','conteo',1_000_000_000);
+  assert.throws(()=>move(max,'infusion-0','entrada',0.01),/Stock resultante/);
+  assert.equal(move(max,'infusion-0','salida',0.01).supplies!.find(item=>item.id==='infusion-0')!.stock,999_999_999.99);
+  assert.equal(s.supplies!.find(item=>item.id==='infusion-0')!.stock,0.5);
+});
+
+test('mínimos decimales de infusiones conservan alertas y permiten renombrar',()=>{
+  let s=move(seed(),'infusion-2','conteo',0.25);
+  s=run(s,'supplyUpdate',{supplyId:'infusion-2',name:'Taza de Amor a granel',minimum:0.25});
+  const item=s.supplies!.find(value=>value.id==='infusion-2')!;
+  assert.equal(item.minimum,0.25);
+  assert.equal(formatSupplyQuantity(item,item.minimum!),'0.25');
+  assert(!lowSupplies(s.supplies!).some(value=>value.id===item.id));
+  assert(lowSupplies(s.supplies!,true).some(value=>value.id===item.id));
+  s=move(s,item.id,'salida',0.01);
+  assert(lowSupplies(s.supplies!).some(value=>value.id===item.id));
+  assert.throws(()=>run(s,'supplyUpdate',{supplyId:item.id,name:item.name,minimum:0.251}),/decimales/);
+  assert.throws(()=>run(s,'supplyUpdate',{supplyId:'insumo-0',name:'Café',minimum:0.25}),/entero/);
+  assert.deepEqual(validateBackup(s),s);
+});
+
+test('restauración conserva respaldos enteros y rechaza fracciones o saldos alterados',()=>{
+  const legacy=move(seed(),'infusion-3','conteo',2);
+  assert.deepEqual(validateBackup(legacy),legacy);
+  let s=move(seed(),'infusion-3','conteo',0.3);
+  s=move(s,'infusion-3','salida',0.1);
+  const badPrecision=structuredClone(s);badPrecision.supplyMovements![0].quantity=0.101;
+  assert.throws(()=>validateBackup(badPrecision),/decimales/);
+  const badStock=structuredClone(s);badStock.supplies!.find(item=>item.id==='infusion-3')!.stock=0.201;
+  assert.throws(()=>validateBackup(badStock),/decimales/);
+  const badBalance=structuredClone(s);badBalance.supplyMovements![0].after=0.21;
+  assert.throws(()=>validateBackup(badBalance),/saldo/);
+  const wrongUnit=structuredClone(s);wrongUnit.supplies!.find(item=>item.id==='infusion-3')!.unit='unidad';
+  assert.throws(()=>validateBackup(wrongUnit),/entero/);
 });

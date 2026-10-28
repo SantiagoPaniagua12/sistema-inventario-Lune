@@ -18,7 +18,7 @@ export async function migrateCatalog(client:PoolClient){
    const updated=(await client.query('UPDATE insumos SET unidad=$1,unidades_por_paquete=$2,observaciones=$3 WHERE id_insumo=$4 RETURNING stock,stock_minimo',['sobre',pack,`Bolsa de ${pack} sobres de ${grams} g. Control por sobres.`,id])).rows[0];
    assert.equal(updated.stock,item.stock);assert.equal(updated.stock_minimo,item.stock_minimo);changed=true;
   }
-  sachets.push({name,stock:item.stock,unit:'sobres',packSize:pack});
+  sachets.push({name,stock:item.stock===null?null:Number(item.stock),unit:'sobres',packSize:pack});
  }
  const sourceIds=['kombucha-0','kombucha-1','kombucha-2'];
  const sources=(await client.query('SELECT * FROM insumos WHERE id_insumo=ANY($1) ORDER BY id_insumo FOR UPDATE',[sourceIds])).rows;
@@ -28,7 +28,7 @@ export async function migrateCatalog(client:PoolClient){
  else if(sources.length){
   if(sources.length!==3||sources.some(i=>i.fusionado_en))throw new Error('La unificación requiere revisar el catálogo de origen.');
   if(unified&&(unified.stock!==null||(await client.query("SELECT 1 FROM movimientos_insumos WHERE id_insumo='kombuchas'")).rowCount))throw new Error('Kombuchas ya tiene conteos; no se combinará automáticamente.');
-  const known=sources.every(i=>i.stock!==null),total=known?sources.reduce((n,i)=>n+i.stock,0):null;
+  const known=sources.every(i=>i.stock!==null),total=known?sources.reduce((n,i)=>n+Number(i.stock),0):null;
   if(total!==null&&total>1000000000)throw new Error('El total excede el límite.');
   const note=known?'Stock unificado de Chill out, Sunset fizz y Emoliente. Historial por sabor conservado.':'Unificación por sabores. Falta confirmar el conteo total real; los saldos anteriores permanecen en el historial.';
   await client.query(`INSERT INTO insumos(id_insumo,nombre,categoria,unidad,stock,stock_minimo,capacidad_ml,unidades_por_paquete,observaciones,estimado,activo) VALUES('kombuchas','Kombuchas','Bebidas','botella',$1,NULL,355,1,$2,false,true) ON CONFLICT(id_insumo) DO UPDATE SET nombre='Kombuchas',stock=$1,observaciones=$2`,[total,note]);

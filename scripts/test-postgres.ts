@@ -126,6 +126,53 @@ async function main() {
     await mutate('supplyMove', { supplyId: 'liquido-0', action: 'conteo', percent: 25, responsible: 'Barra' });
     assert.equal(s.supplies!.find(i=>i.id==='liquido-0')!.stock,150);
     assert.deepEqual(validateBackup(s),s);
+    // La migración cambia tipos, conserva todos los datos y puede repetirse.
+    const decimalSql=(await readFile('database/018_infusiones_decimales.sql','utf8')).replaceAll('public.',`"${schema}".`);
+    const decimalClient=await isolated.connect();
+    try {
+      await decimalClient.query('BEGIN');
+      const beforeDecimals=await inventorySnapshot(decimalClient);
+      await decimalClient.query(decimalSql);
+      await verifyInventorySnapshot(decimalClient,beforeDecimals);
+      await decimalClient.query(decimalSql);
+      await verifyInventorySnapshot(decimalClient,beforeDecimals);
+      await decimalClient.query('COMMIT');
+    } catch(error) { await decimalClient.query('ROLLBACK');throw error; }
+    finally { decimalClient.release(); }
+    assert.deepEqual(await getPostgresState(),s);
+    for(const supplyId of ['infusion-0','infusion-1','infusion-2','infusion-3','infusion-4','infusion-5']) {
+      await mutate('supplyUpdate',{supplyId,name:s.supplies!.find(i=>i.id===supplyId)!.name,minimum:0.25});
+      await mutate('supplyMove',{supplyId,action:'conteo',quantity:0.5,responsible:'Barra'});
+      await mutate('supplyMove',{supplyId,action:'entrada',quantity:0.25,responsible:'Barra'});
+      await mutate('supplyMove',{supplyId,action:'salida',quantity:0.3,responsible:'Barra'});
+      const readBack=await getPostgresState();
+      assert.equal(readBack.supplies!.find(i=>i.id===supplyId)!.stock,0.45);
+      assert.equal(readBack.supplies!.find(i=>i.id===supplyId)!.minimum,0.25);
+      assert.deepEqual(readBack,s);
+    }
+    assert.deepEqual(validateBackup(s),s);
+    assert.equal(typeof (await isolated.query("SELECT stock FROM insumos WHERE id_insumo='infusion-0'")).rows[0].stock,'string');
+    // PostgreSQL también rechaza más de dos decimales y fracciones de otros insumos.
+    for(const [id,quantity] of [['infusion-0',0.005],['infusion-0',-0.01],['infusion-0',1000000000.01],['fruta-5',0.5],['insumo-0',0.5]] as const) {
+      await assert.rejects(()=>isolated!.query('UPDATE insumos SET stock=$1 WHERE id_insumo=$2',[quantity,id]),{code:'23514'});
+    }
+    await assert.rejects(()=>isolated!.query("UPDATE insumos SET stock_minimo=0.001 WHERE id_insumo='infusion-0'"),{code:'23514'});
+    await assert.rejects(()=>isolated!.query("UPDATE insumos SET stock_minimo=0.5 WHERE id_insumo='fruta-5'"),{code:'23514'});
+    for(const [id,quantity] of [['infusion-0',0.005],['fruta-5',0.5],['insumo-0',0.5]] as const) {
+      await assert.rejects(()=>isolated!.query("INSERT INTO movimientos_insumos(id_movimiento,id_insumo,tipo,cantidad,stock_anterior,stock_posterior,responsable) VALUES($1,$2,'conteo',$3,NULL,$3,'Prueba')",[crypto.randomUUID(),id,quantity]),{code:'23514'});
+    }
+    // Un fallo al guardar el movimiento revierte también la cantidad decimal.
+    await isolated.query("ALTER TABLE movimientos_insumos ADD CONSTRAINT fallo_decimal CHECK (NOT (id_insumo='infusion-5' AND tipo='salida' AND cantidad=0.01))");
+    await assert.rejects(()=>mutatePostgres({type:'supplyMove',revision:s.revision,supplyId:'infusion-5',action:'salida',quantity:0.01,responsible:'Barra'}),/restricciones/);
+    assert.deepEqual(await getPostgresState(),s);
+    await isolated.query('ALTER TABLE movimientos_insumos DROP CONSTRAINT fallo_decimal');
+    const verifyDecimalClient=await isolated.connect();
+    try {
+      const beforeRepeat=await inventorySnapshot(verifyDecimalClient);
+      await verifyDecimalClient.query(decimalSql);
+      await verifyInventorySnapshot(verifyDecimalClient,beforeRepeat);
+    } finally { verifyDecimalClient.release(); }
+    console.log('OK: seis infusiones con dos decimales, persistencia y mínimos; demás insumos enteros; migración conserva datos, se puede repetir y revierte movimientos fallidos.');
     // Real PostgreSQL transactions: profile identity, permissions and atomic audit.
     await isolated.query(`CREATE TABLE perfiles_acceso(auth_id uuid PRIMARY KEY,nombre text,rol text,activo boolean,cambiar_password boolean);
       CREATE TABLE auditoria_acceso(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,auth_id uuid,accion text,detalle jsonb);
@@ -226,7 +273,7 @@ async function main() {
       await salonClient.query("INSERT INTO movimientos_insumos(id_movimiento,id_insumo,tipo,cantidad,stock_anterior,stock_posterior,responsable) VALUES($1,'bolsas-antiguas','conteo',17,NULL,17,'Shalu')",[crypto.randomUUID()]);
       const oldHistory=(await salonClient.query("SELECT * FROM movimientos_insumos WHERE id_insumo='bolsas-antiguas'")).rows;
       const result=await addSalonSupplies(salonClient);assert.equal(result.added.length,11);assert.deepEqual(result.reclassified,['Bolsas de papel grandes']);
-      const reused=(await salonClient.query("SELECT * FROM insumos WHERE id_insumo='bolsas-antiguas'")).rows[0];assert.equal(reused.categoria,'Empaques');assert.equal(reused.stock,17);assert.equal(reused.stock_minimo,5);
+      const reused=(await salonClient.query("SELECT * FROM insumos WHERE id_insumo='bolsas-antiguas'")).rows[0];assert.equal(reused.categoria,'Empaques');assert.equal(Number(reused.stock),17);assert.equal(Number(reused.stock_minimo),5);
       assert.deepEqual((await salonClient.query("SELECT * FROM movimientos_insumos WHERE id_insumo='bolsas-antiguas'")).rows,oldHistory);
       assert.equal((await salonClient.query("SELECT count(*)::int n FROM insumos WHERE nombre='Bolsas de papel grandes'")).rows[0].n,1);
       assert.equal((await salonClient.query("SELECT stock FROM insumos WHERE id_insumo='papeleria-boletas'")).rows[0].stock,null);
@@ -247,7 +294,7 @@ async function main() {
     await copyPool.query(await readFile(path.join(process.cwd(),'database','002_control.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','005_insumos.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','007_alertas_excel.sql'),'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql','018_infusiones_decimales.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
     const targetClient=await copyPool.connect();
     try {
       await targetClient.query('BEGIN');await insertInventorySnapshot(targetClient,snapshot);await verifyInventorySnapshot(targetClient,snapshot);await targetClient.query('COMMIT');

@@ -34,3 +34,14 @@ test('papelería cuenta rollos y unidades, conserva historial y participa en res
  const kitchen:Actor={id:'cocina',name:'Cocina',role:'cocina',mustChangePassword:false};assert.throws(()=>authorizeCommand(kitchen,{type:'supplyMove',revision:s.revision,supplyId:'papeleria-boletas',action:'salida',quantity:1,responsible:'Alex'},s));
  const salon:Actor={id:'salon',name:'Salón',role:'mozo',mustChangePassword:false};assert.equal(authorizeCommand(salon,{type:'supplyMove',revision:s.revision,supplyId:'papeleria-boletas',action:'salida',quantity:1,responsible:'Shalu'},s).responsible,'Shalu');
 });
+
+
+test('fracciones de bolsa aceptan punto o coma, dos decimales y retiros menores de una bolsa',()=>{
+ for(const [typed,normalized] of [['0,50','0.50'],['0.25','0.25'],['0.01','0.01']])assert.equal(normalizeManualNumber(typed,2),normalized);
+ assert.equal(normalizeManualNumber('0.001',2),null);
+ const rules={min:0.01,max:1000000000,step:'0.01',decimalPlaces:2};
+ for(const value of ['0.01','0.29','0.50','999999999.99','1000000000'])assert.equal(manualNumberMessage(value,rules),'');
+ assert(manualNumberMessage('0',rules));assert(manualNumberMessage('0.001',rules));assert(manualNumberMessage('1000000000.01',rules));
+ const html=renderToStaticMarkup(createElement(ManualCountInput,{...rules,value:'0.50'}));
+ assert(html.includes('inputMode="decimal"'));assert(html.includes('step="0.01"'));assert(html.includes('value="0.50"'));
+});

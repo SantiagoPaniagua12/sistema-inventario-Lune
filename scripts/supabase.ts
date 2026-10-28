@@ -38,7 +38,7 @@ async function main() {
       if (existing.rowCount) throw new Error('El proyecto destino ya tiene tablas de inventario. La migración no reemplaza ni borra datos; utiliza un proyecto vacío.');
       const sql = await readFile(path.join(process.cwd(),'database','schema.sql'),'utf8');
       await destination.query(sql.replace(/^BEGIN;\s*$/gm,'').replace(/^COMMIT;\s*$/gm,''));
-      for (const file of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql']) await destination.query(await readFile(path.join(process.cwd(),'database',file),'utf8'));
+      for (const file of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql','018_infusiones_decimales.sql']) await destination.query(await readFile(path.join(process.cwd(),'database',file),'utf8'));
       await insertInventorySnapshot(destination, snapshot);
       await verifyInventorySnapshot(destination,snapshot);
       await destination.query(await readFile(path.join(process.cwd(),'database','006_supabase_security.sql'),'utf8'));

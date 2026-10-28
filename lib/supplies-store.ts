@@ -8,8 +8,9 @@ export async function readSupplies(client: PoolClient): Promise<{ supplies: Supp
   const items = await client.query('SELECT * FROM insumos ORDER BY categoria,nombre');
   const history = await client.query('SELECT * FROM movimientos_insumos ORDER BY orden DESC');
   return {
-    supplies: items.rows.map(i => ({ id: i.id_insumo, name: i.nombre, group: i.categoria, unit: i.unidad, minimum: i.stock_minimo, stock: i.stock, capacityMl: i.capacidad_ml, packSize: i.unidades_por_paquete, note: i.observaciones, estimated: i.estimado, ...(i.activo===undefined?{}:{active:i.activo}), ...(i.fusionado_en?{mergedInto:i.fusionado_en}:{}) })),
-    supplyMovements: history.rows.map(m => ({ id: m.id_movimiento, supplyId: m.id_insumo, action: m.tipo, quantity: m.cantidad, before: m.stock_anterior, after: m.stock_posterior, responsible: m.responsable, note: m.motivo, estimated: m.estimado, at: new Date(m.creado_en).toISOString() })),
+    // pg returns NUMERIC as text. Convert only inventory quantities and preserve pending counts.
+    supplies: items.rows.map(i => ({ id: i.id_insumo, name: i.nombre, group: i.categoria, unit: i.unidad, minimum: i.stock_minimo === null ? null : Number(i.stock_minimo), stock: i.stock === null ? null : Number(i.stock), capacityMl: i.capacidad_ml, packSize: i.unidades_por_paquete, note: i.observaciones, estimated: i.estimado, ...(i.activo===undefined?{}:{active:i.activo}), ...(i.fusionado_en?{mergedInto:i.fusionado_en}:{}) })),
+    supplyMovements: history.rows.map(m => ({ id: m.id_movimiento, supplyId: m.id_insumo, action: m.tipo, quantity: Number(m.cantidad), before: m.stock_anterior === null ? null : Number(m.stock_anterior), after: Number(m.stock_posterior), responsible: m.responsable, note: m.motivo, estimated: m.estimado, at: new Date(m.creado_en).toISOString() })),
   };
 }
 async function insertSupply(client: PoolClient, item: Supply, seed = false) {

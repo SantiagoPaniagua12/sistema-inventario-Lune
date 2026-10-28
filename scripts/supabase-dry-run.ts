@@ -22,7 +22,7 @@ async function main(){
     await client.query(`SET LOCAL search_path TO "${schema}"`);
     const base=await readFile(path.join(process.cwd(),'database','schema.sql'),'utf8');
     await client.query(base.replace(/^BEGIN;\s*$/gm,'').replace(/^COMMIT;\s*$/gm,''));
-    for(const filename of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql'])await client.query((await readFile(path.join(process.cwd(),'database',filename),'utf8')).replaceAll('public.',`"${schema}".`));
+    for(const filename of ['002_control.sql','005_insumos.sql','007_alertas_excel.sql','012_operacion_simple.sql','013_borradores.sql','018_infusiones_decimales.sql'])await client.query((await readFile(path.join(process.cwd(),'database',filename),'utf8')).replaceAll('public.',`"${schema}".`));
     await insertInventorySnapshot(client,snapshot);
     const restored=await inventorySnapshot(client);
     for(const table of INVENTORY_TABLES){

@@ -16,6 +16,8 @@ Consultar [Catálogo y conteos](docs/CATALOGO-Y-CONTEOS.md) para los cambios de 
 
 Los campos numéricos se editan manualmente sin incrementos por rueda o flechas. Los empaques y la nueva categoría Papelería incorporan los insumos de atención; consulta [Insumos de salón](docs/INSUMOS-DE-SALON.md).
 
+Las seis infusiones por bolsa admiten centésimas en disponible, mínimo, conteo, ingreso y retiro. Consultar [Infusiones y decimales](docs/INFUSIONES-DECIMALES.md) para preparar la base existente.
+
 ## Inicio
 
 Requiere Node.js 20.9 o superior y npm.

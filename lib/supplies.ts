@@ -9,6 +9,15 @@ export type SupplyUnit = typeof SUPPLY_UNITS[number];
 export type Supply = { active?:boolean; mergedInto?:string; id: string; name: string; group: SupplyGroup; unit: SupplyUnit; minimum: number | null; stock: number | null; capacityMl: number | null; packSize: number; note: string; estimated: boolean };
 export type SupplyMovement = { id: string; supplyId: string; action: 'entrada' | 'salida' | 'conteo'; quantity: number; before: number | null; after: number; responsible: string; note: string; estimated: boolean; at: string };
 export const unitLabel = (unit: SupplyUnit) => ({ porcion: 'porciones', bolsa: 'bolsas', caja: 'cajas', botella: 'botellas', unidad: 'unidades', paquete: 'paquetes', ml: 'ml', sobre:'sobres', rollo:'rollos' })[unit];
+const fractionalInfusionIds = new Set(['infusion-0', 'infusion-1', 'infusion-2', 'infusion-3', 'infusion-4', 'infusion-5']);
+/** Only the confirmed infusion catalogue uses fractions of a bag. Names may change. */
+export function supplyDecimalPlaces(item: Pick<Supply, 'id' | 'group' | 'unit'>): 0 | 2 {
+  return item.group === 'Insumos' && item.unit === 'bolsa' && fractionalInfusionIds.has(item.id) ? 2 : 0;
+}
+export function formatSupplyQuantity(item: Pick<Supply, 'id' | 'group' | 'unit'>, value: number): string {
+  const decimals = supplyDecimalPlaces(item);
+  return value.toLocaleString('es-PE', decimals ? { minimumFractionDigits: decimals, maximumFractionDigits: decimals } : undefined);
+}
 export function initialSupplies(): Supply[] {
   const items: Supply[] = [];
   const add = (code: string, name: string, group: SupplyGroup, unit: SupplyUnit, capacityMl: number | null = null, packSize = 1, note = '') => items.push({ id: code, name, group, unit, capacityMl, packSize, note, minimum: null, stock: null, estimated: false });
@@ -41,6 +50,22 @@ const whole = (value: unknown, label: string, min = 0): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > 1_000_000_000) throw new Error(`${label}: ingresa un número entero válido, mínimo ${min}.`);
   return value;
 };
+const amount = (item: Pick<Supply, 'id' | 'group' | 'unit'>, value: unknown, label: string, min = 0): number => {
+  if (!supplyDecimalPlaces(item)) return whole(value, label, min);
+  // Comparing with the canonical hundredths rejects extra precision without
+  // rejecting ordinary decimals such as 0.29 whose multiplication is inexact.
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > 1_000_000_000 || value !== Math.round(value * 100) / 100) {
+    throw new Error(`${label}: ingresa una cantidad válida con hasta 2 decimales, mínimo ${min}.`);
+  }
+  return value;
+};
+const movementStock = (item: Pick<Supply, 'id' | 'group' | 'unit'>, action: SupplyMovement['action'], quantity: number, before: number | null): number => {
+  if (action === 'conteo') return quantity;
+  // Integer hundredths keep repeated withdrawals and 0.10 + 0.20 exact.
+  const scale = supplyDecimalPlaces(item) ? 100 : 1;
+  const previous = Math.round(before! * scale), change = Math.round(quantity * scale);
+  return (action === 'entrada' ? previous + change : previous - change) / scale;
+};
 const text = (value: unknown, label: string, max = 180): string => {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new Error(`${label} es obligatorio (máximo ${max} caracteres).`);
   return value.trim();
@@ -71,7 +96,7 @@ export function executeSupplyCommand(original: State, command: Command): State {
     s.supplies=s.supplies.filter(i=>i.id!==command.supplyId);
   } else if (command.type === 'supplyUpdate') {
     if (!item) throw new Error('Insumo inválido.');
-    item.minimum = command.minimum == null ? null : whole(command.minimum, 'Mínimo');
+    item.minimum = command.minimum == null ? null : amount(item, command.minimum, 'Mínimo');
     item.name = text(command.name, 'Nombre');
     if (s.supplies.some(x => x.id !== item.id && x.group === item.group && x.name.toLowerCase() === item.name.toLowerCase())) throw new Error('Ya existe ese nombre en la categoría.');
     item.note = typeof command.note === 'string' ? command.note.slice(0, 500) : '';
@@ -86,7 +111,7 @@ export function executeSupplyCommand(original: State, command: Command): State {
     if (command.percent !== undefined) {
       if (item.unit !== 'ml' || !item.capacityMl || action !== 'conteo' || typeof command.percent !== 'number' || !Number.isFinite(command.percent) || command.percent < 0 || command.percent > 100) throw new Error('El porcentaje solo se usa para contar un recipiente líquido, entre 0 y 100.');
       quantity = Math.round(item.capacityMl * command.percent / 100); estimated = true;
-    } else quantity = whole(command.quantity, 'Cantidad', action === 'conteo' ? 0 : 1);
+    } else quantity = amount(item, command.quantity, 'Cantidad', action === 'conteo' ? 0 : supplyDecimalPlaces(item) ? 0.01 : 1);
     if (command.byPack === true) {
       if ((item.group !== 'Empaques'&&item.unit!=='sobre') || action !== 'entrada' || item.packSize<=1) throw new Error('La entrada por presentación requiere un empaque o una bolsa de sobres.');
       quantity = whole(quantity * item.packSize, 'Cantidad total', 1);
@@ -95,9 +120,9 @@ export function executeSupplyCommand(original: State, command: Command): State {
     if(item.mergedInto)throw new Error('Este producto fue unificado. Registra el movimiento en Kombuchas.');
     if(item.active===false&&(action==='entrada'||action==='conteo'&&quantity>(item.stock??0)))throw new Error('El producto está desactivado para nuevos ingresos.');
     const before = item.stock;
-    const after = action === 'conteo' ? quantity : action === 'entrada' ? before! + quantity : before! - quantity;
+    const after = movementStock(item, action, quantity, before);
     if (after < 0) throw new Error('No hay suficiente stock para ese retiro.');
-    whole(after, 'Stock resultante');
+    amount(item, after, 'Stock resultante');
     if (item.unit === 'ml' && item.capacityMl !== null && after > item.capacityMl) throw new Error('El contenido supera la capacidad del recipiente.');
     let note = typeof command.note === 'string' ? command.note.trim().slice(0, 500) : '';
     if (action === 'conteo' && before !== null && !note) throw new Error('Indica el motivo del nuevo conteo.');
@@ -117,7 +142,7 @@ export function validateSupplyBackup(items: unknown, movements: unknown): { supp
   const supplies = items.map((value: Supply) => {
     if (!value || typeof value !== 'object' || typeof value.id !== 'string' || !value.id || ids.has(value.id) || !SUPPLY_GROUPS.includes(value.group) || !SUPPLY_UNITS.includes(value.unit)) throw new Error('El respaldo de insumos no es válido.');
     ids.add(value.id);
-    const item: Supply = { id: value.id, name: text(value.name, 'Nombre'), group: value.group, unit: value.unit, minimum: value.minimum === null ? null : whole(value.minimum, 'Mínimo'), stock: value.stock === null ? null : whole(value.stock, 'Stock'), capacityMl: value.capacityMl === null ? null : whole(value.capacityMl, 'Capacidad', 1), packSize: whole(value.packSize, 'Presentación', 1), note: typeof value.note === 'string' ? value.note.slice(0, 500) : '', estimated: value.estimated === true };
+    const item: Supply = { id: value.id, name: text(value.name, 'Nombre'), group: value.group, unit: value.unit, minimum: value.minimum === null ? null : amount(value, value.minimum, 'Mínimo'), stock: value.stock === null ? null : amount(value, value.stock, 'Stock'), capacityMl: value.capacityMl === null ? null : whole(value.capacityMl, 'Capacidad', 1), packSize: whole(value.packSize, 'Presentación', 1), note: typeof value.note === 'string' ? value.note.slice(0, 500) : '', estimated: value.estimated === true };
     if(value.active!==undefined){if(typeof value.active!=='boolean')throw new Error('Estado de insumo inválido.');item.active=value.active;}
     if(value.mergedInto!==undefined){if(typeof value.mergedInto!=='string'||!value.mergedInto)throw new Error('Fusión inválida.');item.mergedInto=value.mergedInto;}
     if (item.group === 'Frutas congeladas' && item.unit !== 'porcion') throw new Error('Las frutas se cuentan por porciones.');
@@ -125,13 +150,15 @@ export function validateSupplyBackup(items: unknown, movements: unknown): { supp
     return item;
   });
   for(const item of supplies){if(item.mergedInto&&(item.active!==false||item.mergedInto===item.id||!supplies.some(target=>target.id===item.mergedInto&&!target.mergedInto)))throw new Error('Unificación inválida.');}
+  const suppliesById = new Map(supplies.map(item => [item.id, item]));
   const movementIds = new Set<string>();
   const supplyMovements = movements.map((m: SupplyMovement) => {
     if (!m || typeof m.id !== 'string' || !m.id || movementIds.has(m.id) || !ids.has(m.supplyId) || !['entrada', 'salida', 'conteo'].includes(m.action) || typeof m.at !== 'string' || !Number.isFinite(Date.parse(m.at))) throw new Error('El historial de insumos no es válido.');
     movementIds.add(m.id);
-    const result: SupplyMovement = { id: m.id, supplyId: m.supplyId, action: m.action, quantity: whole(m.quantity, 'Cantidad', m.action === 'conteo' ? 0 : 1), before: m.before === null ? null : whole(m.before, 'Stock anterior'), after: whole(m.after, 'Stock posterior'), responsible: text(m.responsible, 'Responsable', 80), note: typeof m.note === 'string' ? m.note.slice(0, 500) : '', estimated: m.estimated === true, at: m.at };
+    const item = suppliesById.get(m.supplyId)!;
+    const result: SupplyMovement = { id: m.id, supplyId: m.supplyId, action: m.action, quantity: amount(item, m.quantity, 'Cantidad', m.action === 'conteo' ? 0 : supplyDecimalPlaces(item) ? 0.01 : 1), before: m.before === null ? null : amount(item, m.before, 'Stock anterior'), after: amount(item, m.after, 'Stock posterior'), responsible: text(m.responsible, 'Responsable', 80), note: typeof m.note === 'string' ? m.note.slice(0, 500) : '', estimated: m.estimated === true, at: m.at };
     if (result.action !== 'conteo' && result.before === null) throw new Error('Falta conteo inicial en el historial.');
-    const expected = result.action === 'conteo' ? result.quantity : result.action === 'entrada' ? result.before! + result.quantity : result.before! - result.quantity;
+    const expected = movementStock(item, result.action, result.quantity, result.before);
     if (result.after !== expected) throw new Error('El saldo del movimiento no es válido.');
     return result;
   });

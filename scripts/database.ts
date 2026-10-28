@@ -27,7 +27,7 @@ async function main() {
   if (missing.length) throw new Error(`El esquema no coincide con database/schema.sql. Faltan: ${missing.join(', ')}. No se modificaron las tablas.`);
   for (const column of columns.rows) {
     if (['activo'].includes(column.column_name) && column.data_type !== 'boolean') throw new Error(`${column.table_name}.${column.column_name} debe ser BOOLEAN.`);
-    if (['rendimiento', 'stock_minimo', 'entrada', 'conteo_cierre', 'cantidad'].includes(column.column_name) && column.data_type !== 'integer') throw new Error(`${column.table_name}.${column.column_name} debe ser INTEGER, como en database/schema.sql.`);
+    if (expected[column.table_name] && ['rendimiento', 'stock_minimo', 'entrada', 'conteo_cierre', 'cantidad'].includes(column.column_name) && column.data_type !== 'integer') throw new Error(`${column.table_name}.${column.column_name} debe ser INTEGER, como en database/schema.sql.`);
   }
   console.log('Las ocho tablas tienen las columnas esperadas.');
   if (mode === 'features') {
@@ -41,6 +41,7 @@ async function main() {
   if (mode === 'beta2') {
     await pgTransaction(async client => {
       await client.query(await readFile(path.join(process.cwd(), 'database', '005_insumos.sql'), 'utf8'));
+      await client.query(await readFile(path.join(process.cwd(), 'database', '018_infusiones_decimales.sql'), 'utf8'));
       await client.query(await readFile(path.join(process.cwd(), 'database', '007_alertas_excel.sql'), 'utf8'));
       await seedSupplies(client);
       await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
