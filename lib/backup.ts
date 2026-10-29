@@ -1,3 +1,4 @@
+import {isKitchenProduct} from './baking';
 import { available, type State, type Product, type Shift } from './inventory';
 import {normalizeCategory} from './catalog';
 import { validateSupplyBackup } from './supplies';
@@ -36,7 +37,7 @@ export function validateBackup(value: unknown): State {
     if (category !== 'Postres' && category !== 'Bollería') fail();
     const yieldValue = number(p.yield, 1);
     if (category === 'Bollería' && yieldValue !== 1) fail();
-    return { id: id(p.id), name: name(p.name), category:category!, yield: yieldValue, minimum: number(p.minimum), ...(p.active===undefined?{}:{active:typeof p.active==='boolean'?p.active:fail()}), ...(p.reserveMinimum === undefined ? {} : { reserveMinimum:p.reserveMinimum === null ? null : number(p.reserveMinimum) }) };
+    return { id: id(p.id), name: name(p.name), category:category!, yield: yieldValue, minimum: number(p.minimum), ...(p.kitchenOnly===undefined?{}:{kitchenOnly:typeof p.kitchenOnly==='boolean'?p.kitchenOnly:fail()}), ...(p.active===undefined?{}:{active:typeof p.active==='boolean'?p.active:fail()}), ...(p.reserveMinimum === undefined ? {} : { reserveMinimum:p.reserveMinimum === null ? null : number(p.reserveMinimum) }) };
   });
   if (!products.length) fail();
   unique(products.map(p => p.id));
@@ -66,7 +67,7 @@ export function validateBackup(value: unknown): State {
     });
     unique(rows.map(r => r.productId));
     if (s.status === 'closed' && rows.some(r => r.closing === null)) fail();
-    if (s.status === 'open' && (products.some(p=>p.active!==false&&!rows.some(r=>r.productId===p.id)) || rows.some(r => r.closing !== null))) fail();
+    if (s.status === 'open' && (products.some(p=>p.active!==false&&!isKitchenProduct(p)&&!rows.some(r=>r.productId===p.id)) || rows.some(r => r.closing !== null))) fail();
     const shift: Shift = { id: id(s.id), date: date(s.date), period: s.period as Shift['period'], responsible: name(s.responsible), status: s.status as Shift['status'], rows,
       ...(s.responsibles===undefined?{}:{responsibles:team(s.responsibles)}),
       ...(s.openedAt === undefined ? {} : { openedAt: timestamp(s.openedAt) }),
@@ -86,11 +87,21 @@ export function validateBackup(value: unknown): State {
     if (shiftId && !shiftIds.has(shiftId)) fail();
     const lotId = m.lotId === undefined ? undefined : id(m.lotId);
     if (lotId && !lots.some(l=>l.id===lotId && l.productId===productId)) fail();
-    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, ['Corrección de ingreso','Corrección de producción'].includes(String(m.type)) ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(m.responsibles===undefined?{}:{responsibles:team(m.responsibles)}), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
+    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, ['Corrección de ingreso','Corrección de producción'].includes(String(m.type)) ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(m.source===undefined?{}:{source:m.source==='horneados'?'horneados' as const:fail()}), ...(m.serviceDate===undefined?{}:{serviceDate:date(m.serviceDate),period:m.period==='Mañana'||m.period==='Tarde'?m.period as 'Mañana'|'Tarde':fail()}), ...(m.responsibles===undefined?{}:{responsibles:team(m.responsibles)}), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
   });
   unique(movements.map(m => m.id));
   const extra = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);
   const state: State = { revision: number(root.revision), products, lots, shifts, movements, ...extra };
+  if(root.baked!==undefined){
+    state.baked=list(root.baked,10000).map(value=>{const b=record(value),productId=id(b.productId),lotId=id(b.lotId);
+      if(!products.some(p=>p.id===productId&&p.category==='Bollería')||!lots.some(l=>l.id===lotId&&l.productId===productId))fail();
+      const expected=movements.filter(m=>m.productId===productId&&m.lotId===lotId).reduce((n,m)=>n+(m.type==='Horneado en cocina'?m.quantity:m.type==='Uso en platos'||m.source==='horneados'?-m.quantity:0),0);
+      if(number(b.quantity)!==expected)fail();
+      return {productId,lotId,quantity:number(b.quantity),bakedAt:timestamp(b.bakedAt)};
+    });
+    unique(state.baked.map(l=>l.lotId));
+    if(movements.some(m=>['Horneado en cocina','Uso en platos'].includes(m.type)&&!state.baked!.some(l=>l.lotId===m.lotId&&l.productId===m.productId)))fail();
+  }else if(movements.some(m=>['Horneado en cocina','Uso en platos'].includes(m.type)))fail();
   if (root.excelImports !== undefined) {
     const batches = validateExcelBackup(root.excelImports, products);
     if (excelConflicts(state,batches.flatMap(batch=>batch.records)).length) fail();

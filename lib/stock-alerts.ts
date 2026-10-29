@@ -1,3 +1,4 @@
+import {isKitchenProduct} from './baking';
 import { available, type State } from './inventory';
 import { unitLabel } from './supplies';
 export type StockAlert = { id: string; productId: string; name: string; section: string; stock: number; minimum: number | null; unit: string; estimated: boolean; empty: boolean };
@@ -8,10 +9,10 @@ export function stockAlerts(state: State) {
   for (const product of state.products) {
     if(product.active===false)continue;
     const row = latest?.rows.find(row=>row.productId===product.id);
-    if (row&&state.visibility?.display!==false) {
+    if (!isKitchenProduct(product)&&row&&state.visibility?.display!==false) {
       const stock = latest?.status === 'closed' ? row.closing : available(row);
       if (stock !== null && stock <= product.minimum) alerts.push({ id:`display:${product.id}`, productId:product.id, name:product.name, section:'Mostrador', stock, minimum:product.minimum, unit:'unidades', estimated:latest?.status === 'open', empty:stock===0 });
-    } else if(state.visibility?.display!==false) missingCounts++;
+    } else if(!isKitchenProduct(product)&&state.visibility?.display!==false) missingCounts++;
     if(state.visibility?.reserve===false)continue;
     const lots = state.lots.filter(lot=>lot.productId===product.id);
     const minimum = product.reserveMinimum ?? null;

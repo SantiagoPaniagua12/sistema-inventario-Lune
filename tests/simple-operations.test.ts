@@ -29,16 +29,17 @@ test('ingreso múltiple consume varios lotes FIFO, suma por producto y confirma 
   let s=opened();
   s=run(s,'produceBatch',{responsible:'Joel',date,items:[{productId:'p1',quantity:2},{productId:'v1',quantity:4}]});
   s=run(s,'produceBatch',{responsible:'Alex',date,items:[{productId:'p1',quantity:5}]});
+  s=run(s,'bakeBatch',{items:[{productId:'v1',quantity:4}],responsible:'Joel',date,period:'Mañana'});
   const before=structuredClone(s);
   s=run(s,'replenishBatch',{items:[{productId:'p1',quantity:6},{productId:'v1',quantity:3}]});
   assert.equal(s.revision,before.revision+1);
-  assert.deepEqual(s.lots.map(l=>l.quantity),[0,1,1]);
+  assert.deepEqual(s.lots.map(l=>l.quantity),[0,0,1]);
   assert.equal(s.shifts[0].rows.find(r=>r.productId==='p1')!.incoming,6);
   assert.equal(s.shifts[0].rows.find(r=>r.productId==='v1')!.incoming,3);
   assert.equal(new Set(s.movements.map(m=>m.id)).size,s.movements.length);
-  assert(s.movements.filter(m=>m.type!=='Producción').every(m=>m.responsible==='Shalu'&&m.responsibles?.[0]==='Shalu'));
+  assert(s.movements.filter(m=>!['Producción','Horneado en cocina'].includes(m.type)).every(m=>m.responsible==='Shalu'&&m.responsibles?.[0]==='Shalu'));
   assert.deepEqual(validateBackup(s),s);
-  assert.deepEqual(before.lots.map(l=>l.quantity),[2,4,5]);
+  assert.deepEqual(before.lots.map(l=>l.quantity),[2,0,5]);
 });
 
 test('un producto inválido o sin stock revierte todo el ingreso y no produce registros parciales',()=>{

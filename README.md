@@ -18,6 +18,8 @@ Los campos numéricos se editan manualmente sin incrementos por rueda o flechas.
 
 Las seis infusiones por bolsa admiten centésimas en disponible, mínimo, conteo, ingreso y retiro. Consultar [Infusiones y decimales](docs/INFUSIONES-DECIMALES.md) para preparar la base existente.
 
+El flujo de bollería separa congelados, horneados en Cocina e ingresos al mostrador. Focaccia y pan para tostadas se descuentan por uso en platos. Ver [Horneados](docs/HORNEADOS.md).
+
 ## Inicio
 
 Requiere Node.js 20.9 o superior y npm.

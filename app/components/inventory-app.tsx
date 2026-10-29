@@ -1,4 +1,6 @@
 'use client';
+import {isKitchenProduct,bakedQuantity} from '@/lib/baking';
+import {BakingWorkspace} from './baking-workspace';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { LayoutDashboard, Snowflake, ClipboardList, History, Settings2, Plus, ArrowUpRight, Check, X, ChevronRight, Download, CircleHelp, Croissant, CakeSlice, RefreshCw, Menu, Boxes, SprayCan, BarChart3, Bell, Upload } from 'lucide-react';
@@ -22,7 +24,7 @@ import {ManualCountInput} from './manual-count-input';
 import {CatalogActions} from './catalog-actions';
 type View = InventorySection;
 type Modal = OperationKind | 'product' | 'createProduct' | 'restore' | null;
-const icons = { 'Turno actual': LayoutDashboard, 'Reserva congelada': Snowflake, Historial: History, Productos: Settings2, 'Insumos y bebidas': Boxes, Limpieza: SprayCan, 'Ventas por turno': BarChart3, 'Salidas al mostrador':ArrowUpRight, 'Alertas de inventario':Bell, 'Importar Excel':Upload };
+const icons = { 'Turno actual': LayoutDashboard, 'Reserva congelada': Snowflake, Horneados:Croissant, Historial: History, Productos: Settings2, 'Insumos y bebidas': Boxes, Limpieza: SprayCan, 'Ventas por turno': BarChart3, 'Salidas al mostrador':ArrowUpRight, 'Alertas de inventario':Bell, 'Importar Excel':Upload };
 const fmt = (date: string) => new Intl.DateTimeFormat('es-PE', { dateStyle: 'medium', timeZone: 'America/Lima' }).format(new Date(`${date}T12:00:00-05:00`));
 
 import type { Actor } from '@/lib/access';
@@ -80,14 +82,15 @@ export default function Home({actor}:{actor:Actor}) {
       return true;
     } catch (e) { setError((e as Error).message); return false; } finally { setBusy(false); }
   }
-  const active = state?.shifts.find(s => s.status === 'open');
+  const rawActive=state?.shifts.find(s=>s.status==='open');
+  const active=rawActive&&state?{...rawActive,rows:rawActive.rows.filter(row=>!isKitchenProduct(state.products.find(p=>p.id===row.productId)!))}:rawActive;
   useEffect(()=>{if(closeConfirmation&&closeConfirmation.shiftId!==active?.id)setCloseConfirmation(null);},[active?.id,closeConfirmation]);
   const draft=useClosingDraft(active?.id,waiter,actor.id);
   const counts=closingCounts(active?.rows??[],draft.counts);
   const latest = state?.shifts.at(-1);
   const historyShifts=state?allSalesShifts(state):[];
   const displayed = view === 'Historial' ? historyShifts.find(s => s.id === historyId) : active ?? latest;
-  const products = state?.products.filter(p => (view==='Productos'?(p.active!==false||admin&&showInactive):view==='Turno actual'||view==='Historial'?!!displayed?.rows.some(row=>row.productId===p.id):p.active!==false||!!state&&reserveQuantity(state,p.id)>0) && (filter === 'Todos' || p.category === filter) && p.name.toLowerCase().includes(query.toLowerCase())) ?? [];
+  const products = state?.products.filter(p => (view!=='Turno actual'||!isKitchenProduct(p))&&(view==='Productos'?(p.active!==false||admin&&showInactive):view==='Turno actual'||view==='Historial'?!!displayed?.rows.some(row=>row.productId===p.id):p.active!==false||!!state&&reserveQuantity(state,p.id)>0) && (filter === 'Todos' || p.category === filter) && p.name.toLowerCase().includes(query.toLowerCase())) ?? [];
   const chosen = state?.products.find(p => p.id === selected);
   const rows = displayed?.rows ?? [];
   const historicalMovements = state?.movements.filter(m => m.shiftId === historyId).slice(0, 100) ?? [];
@@ -194,6 +197,7 @@ export default function Home({actor}:{actor:Actor}) {
         {view === 'Reserva congelada' && cook && reserveMode === 'frutas' && <SuppliesWorkspace actor={actor} key="frutas" state={state} groups={['Frutas congeladas']} busy={interactionLocked} error={error} onCommand={command}/>}
         {view === 'Insumos y bebidas' && <SuppliesWorkspace actor={actor} key="insumos" state={state} groups={['Insumos','Bebidas','Empaques','Papelería','Preparados líquidos','Cocina']} busy={interactionLocked} error={error} onCommand={command}/>}
         {view === 'Limpieza' && <SuppliesWorkspace actor={actor} key="limpieza" state={state} groups={['Limpieza']} busy={interactionLocked} error={error} onCommand={command}/>}
+        {view==='Horneados'&&cook&&<BakingWorkspace state={state} busy={interactionLocked} error={error} onCommand={command}/>}
         {view === 'Ventas por turno' && waiter && <SalesOverview state={state} counts={counts}/>}
         {view === 'Salidas al mostrador' && cook && <DisplayTransfers state={state}/>}
         {view === 'Alertas de inventario' && <StockAlertsPanel state={state}/>}
@@ -223,7 +227,7 @@ export default function Home({actor}:{actor:Actor}) {
            {view === 'Historial' && admin && unassignedMovements.length > 0 && <details className="panel legacy-movements"><summary>Movimientos sin turno asociado ({unassignedMovements.length})</summary><p className="legacy-note">Incluye producción fuera de turno y registros previos a esta versión. No se asignan automáticamente para evitar atribuciones incorrectas.</p><div className="table-wrap" role="region" aria-label="Movimientos sin turno asociado" tabIndex={0}><table><thead><tr><th>FECHA · HORA</th><th>PRODUCTO</th><th>MOVIMIENTO</th><th>CANTIDAD</th><th>DETALLE / RESPONSABLE</th></tr></thead><tbody>{unassignedMovements.slice(0, 100).map(m => <tr key={m.id}><td>{new Date(m.at).toLocaleString('es-PE', { timeZone: 'America/Lima' })}</td><td>{state.products.find(p => p.id === m.productId)?.name}</td><td>{m.type === 'Merma de mostrador' ? 'Ajuste histórico' : m.type}</td><td>{m.quantity}</td><td className="detail-cell">{m.note || '—'}<small>{m.responsibles?.join(', ')??m.responsible}</small></td></tr>)}</tbody></table></div></details>}
         </>}
         {view === 'Reserva congelada' && cook && reserveMode === 'produccion' && <>
-          <div className="section-intro"><Snowflake size={19}/><span>Producción disponible por unidades. Cada unidad retirada ingresa como una unidad al mostrador.</span></div>
+          <div className="section-intro"><Snowflake size={19}/><span>Producción disponible por unidades. Los postres ingresan al mostrador; la bollería pasa primero por Horneados.</span></div>
           <section className="panel"><Toolbar filter={filter} setFilter={setFilter} query={query} setQuery={setQuery}/>
             <div className="reserve-grid">{products.map(p => {
               const productLots = state.lots.filter(l => l.productId === p.id && l.quantity > 0).sort((a,b) => a.producedAt.localeCompare(b.producedAt));
@@ -233,7 +237,7 @@ export default function Home({actor}:{actor:Actor}) {
                 <h3>{p.name}</h3><div className="reserve-number">{quantity}<span>unidades disponibles</span></div>
                 <p>{p.category === 'Postres' ? 'Listas para retirar al mostrador' : 'Listas para hornear'}</p>
                 {cook&&<details className="production-details"><summary>Ver producción registrada</summary><div className="lot-list">{productLots.length?productLots.map(l=><div key={l.id}><span>{fmt(l.producedAt)}<small>{l.responsible?`Cocina: ${l.responsible}`:''}</small></span><strong>{l.quantity} uds.</strong></div>):<span>No hay producción disponible.</span>}</div></details>}
-                <div className="reserve-actions">{waiter&&<button className="secondary full" disabled={interactionLocked||!quantity||!active} onClick={()=>show('replenish',p.id)}>Ingresar al mostrador<ArrowUpRight size={16}/></button>}{cook&&<button className="text-button" disabled={interactionLocked||!state.lots.some(l=>l.productId===p.id)} onClick={()=>show('correctProduction',p.id)}>Corregir registro<ChevronRight size={15}/></button>}</div>
+                <div className="reserve-actions">{waiter&&!isKitchenProduct(p)&&<button className="secondary full" disabled={interactionLocked||!(p.category==='Bollería'?bakedQuantity(state,p.id):quantity)||!active} onClick={()=>show('replenish',p.id)}>Ingresar al mostrador<ArrowUpRight size={16}/></button>}{cook&&<button className="text-button" disabled={interactionLocked||!state.lots.some(l=>l.productId===p.id)} onClick={()=>show('correctProduction',p.id)}>Corregir registro<ChevronRight size={15}/></button>}</div>
               </article>;
             })}</div>
           </section><p className="footnote">{!waiter?'Registra la producción y consulta las salidas al mostrador.':active ? 'Cada retiro se registra en el turno abierto.' : 'Abre un turno para retirar unidades de producción.'}</p>

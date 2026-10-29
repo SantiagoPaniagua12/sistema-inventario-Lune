@@ -7,7 +7,7 @@ function run(s: State, type: string, data: Record<string, unknown> = {}) { retur
 function open() { return run(seed(), 'open', { date, period: 'Mañana', responsible: 'Ana', openings: { p1: 5 } }); }
 
 test('ingreso usa el lote más antiguo con stock, desempata por registro y avanza al agotarlo',()=>{
-  for(const productId of ['p1','v1']){
+  for(const productId of ['p1']){
     let s=open();
     const yesterday=new Date(Date.parse(`${date}T12:00:00Z`)-86400000).toISOString().slice(0,10);
     s=run(s,'produce',{productId,quantity:5,responsible:'Joel',date});
@@ -95,10 +95,11 @@ test('impide escrituras con una revisión antigua', () => {
 test('cada croissant horneado suma una unidad al mostrador', () => {
   let s = open();
   s = run(s, 'produce', { productId: 'v1', quantity: 60, responsible: 'Cocinera', date });
+  s = run(s,'bakeBatch',{items:[{productId:'v1',quantity:15}],responsible:'Cocinera',date,period:'Mañana'});
   s = run(s, 'replenish', { productId: 'v1', lotId: s.lots[0].id, quantity: 15 });
   assert.equal(s.lots[0].quantity, 45);
   assert.equal(s.shifts[0].rows.find(r => r.productId === 'v1')?.incoming, 15);
-  assert.match(s.movements[0].note, /15 unidades retiradas de producción/);
+  assert.match(s.movements[0].note, /15 unidades retiradas de horneados/);
 });
 test('permite añadir productos al turno abierto sin alterar los cierres anteriores', () => {
   let s = open();

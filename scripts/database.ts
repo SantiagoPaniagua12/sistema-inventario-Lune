@@ -43,6 +43,8 @@ async function main() {
       await client.query(await readFile(path.join(process.cwd(), 'database', '005_insumos.sql'), 'utf8'));
       await client.query(await readFile(path.join(process.cwd(), 'database', '018_infusiones_decimales.sql'), 'utf8'));
       await client.query(await readFile(path.join(process.cwd(), 'database', '007_alertas_excel.sql'), 'utf8'));
+      await client.query(await readFile('database/019_horneados.sql','utf8'));
+      await client.query("INSERT INTO ubicaciones(nombre_ubicacion,tipo) SELECT 'Horneados en cocina','horneados' WHERE NOT EXISTS(SELECT 1 FROM ubicaciones WHERE tipo='horneados')");
       await seedSupplies(client);
       await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
     });

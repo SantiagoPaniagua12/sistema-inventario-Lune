@@ -1,3 +1,4 @@
+import {isKitchenProduct} from './baking';
 import type { PoolClient } from 'pg';
 import { execute, sales, personKey, shiftTeam, type State, type Command, type Movement } from './inventory';
 import {createHash} from 'node:crypto';
@@ -37,25 +38,28 @@ async function readPg(client: PoolClient): Promise<State> {
     FROM detalle_turno d LEFT JOIN movimiento_inventario m ON m.id_turno=d.id_turno AND m.id_producto=d.id_producto
       AND m.id_ubicacion IN (SELECT id_ubicacion FROM ubicaciones WHERE tipo='mostrador')
     GROUP BY d.id_detalle_turno ORDER BY d.id_detalle_turno`);
-  const movements = await client.query(`SELECT m.*, u.nombre_usuario FROM movimiento_inventario m
+  const movements = await client.query(`SELECT m.*, u.nombre_usuario,b.tipo AS ubicacion_tipo,EXISTS(SELECT 1 FROM movimiento_inventario other JOIN ubicaciones ub USING(id_ubicacion) WHERE other.id_operacion=m.id_operacion AND ub.tipo='horneados') AS desde_horneados FROM movimiento_inventario m
     JOIN usuarios u USING (id_usuario) JOIN ubicaciones b USING (id_ubicacion)
     WHERE (m.tipo='produccion' AND m.sentido='entrada' AND b.tipo='congelador')
     OR (m.tipo='ajuste' AND b.tipo='congelador' AND m.motivo LIKE 'Corrección de producción:%')
     OR (m.tipo IN ('reposicion','horneado') AND b.tipo='mostrador')
     OR (m.tipo='venta_calculada' AND m.motivo LIKE 'Corrección:%' AND NOT EXISTS (SELECT 1 FROM movimiento_inventario other WHERE other.id_operacion=m.id_operacion AND other.tipo IN ('reposicion','horneado')))
     OR (m.tipo='merma' AND m.sentido='salida' AND b.tipo='mostrador')
+    OR (b.tipo='horneados' AND ((m.tipo='horneado' AND m.sentido='entrada') OR m.tipo='consumo_cocina'))
     ORDER BY m.creado_en DESC, m.id_movimiento_inventario DESC`);
+  const baked=await client.query(`SELECT m.id_producto,m.id_lote,SUM(CASE WHEN sentido='entrada' THEN cantidad ELSE -cantidad END)::int AS cantidad,MIN(m.creado_en) AS horneado_en FROM movimiento_inventario m JOIN ubicaciones u USING(id_ubicacion) WHERE u.tipo='horneados' GROUP BY m.id_producto,m.id_lote ORDER BY MIN(m.creado_en),m.id_lote`);
   const unsupported = products.rows.find(p => !normalizeCategory(p.nombre_categoria));
   if (unsupported) throw new Error('La beta admite las categorías Postres y Bollería. Revisa el catálogo antes de continuar.');
   const supplyState = await readSupplies(client);
   return {
     ...supplyState,
+    baked:baked.rows.map(l=>({productId:String(l.id_producto),lotId:String(l.id_lote),quantity:l.cantidad,bakedAt:timestamp(l.horneado_en)})),
     excelImports: await readExcelImports(client),
     revision: Number(control.rows[0].revision),
-    products: products.rows.map(p => ({ id: String(p.id_producto), name: p.nombre_producto, category: normalizeCategory(p.nombre_categoria)!, active:p.activo, yield: p.rendimiento, minimum: p.stock_minimo, ...(p.stock_minimo_reserva === undefined ? {} : { reserveMinimum:p.stock_minimo_reserva }) })),
+    products: products.rows.map(p => ({ id: String(p.id_producto), name: p.nombre_producto, category: normalizeCategory(p.nombre_categoria)!, active:p.activo, ...(p.solo_cocina?{kitchenOnly:true}:{}), yield: p.rendimiento, minimum: p.stock_minimo, ...(p.stock_minimo_reserva === undefined ? {} : { reserveMinimum:p.stock_minimo_reserva }) })),
     lots: lots.rows.map(l => ({ id: String(l.id_lote), productId: String(l.id_producto), quantity: l.cantidad, producedQuantity:l.producidas, producedAt: day(l.fecha_produccion), note: l.observaciones ?? '', yield: l.rendimiento, responsible: l.nombre_usuario })),
     shifts: shifts.rows.map(s => ({ id: String(s.id_turno), date: day(s.fecha), period: s.periodo === 'manana' ? 'Mañana' : 'Tarde', responsible: s.nombre_usuario, responsibles:teams.rows.filter(t=>t.id_turno===s.id_turno).map(t=>t.nombre_usuario).length?teams.rows.filter(t=>t.id_turno===s.id_turno).map(t=>t.nombre_usuario):[s.nombre_usuario], status: s.estado === 'abierto' ? 'open' : 'closed', openedAt: timestamp(s.abierto_en), ...(s.cerrado_en ? { closedAt: timestamp(s.cerrado_en) } : {}), rows: details.rows.filter(d => d.id_turno === s.id_turno).map(d => ({ productId: String(d.id_producto), opening: d.entrada, incoming: d.ingresos, waste: d.mermas, closing: d.conteo_cierre })) })),
-    movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), type: m.tipo==='ajuste'?'Corrección de producción':m.tipo==='venta_calculada' ? 'Corrección de cierre' : ['reposicion','horneado'].includes(m.tipo) && m.motivo?.startsWith('Corrección:') ? 'Corrección de ingreso' : movementTypes[m.tipo] ?? m.tipo, quantity: m.tipo==='venta_calculada' ? 0 : m.sentido==='salida' && ['reposicion','horneado','ajuste'].includes(m.tipo) ? -m.cantidad : m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.responsables?{responsibles:m.responsables}:{}), ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}), ...(m.id_lote ? {lotId:String(m.id_lote)} : {}) })),
+    movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), ...(m.ubicacion_tipo==='mostrador'&&m.desde_horneados?{source:'horneados' as const}:{}),...(m.fecha_operativa?{serviceDate:day(m.fecha_operativa),period:m.periodo_cocina}:{}), type: m.ubicacion_tipo==='horneados'?(m.tipo==='consumo_cocina'?'Uso en platos':'Horneado en cocina'):m.tipo==='reposicion'&&m.desde_horneados&&!m.motivo?.startsWith('Corrección:')?'Ingreso de horneados':m.tipo==='ajuste'?'Corrección de producción':m.tipo==='venta_calculada' ? 'Corrección de cierre' : ['reposicion','horneado'].includes(m.tipo) && m.motivo?.startsWith('Corrección:') ? 'Corrección de ingreso' : movementTypes[m.tipo] ?? m.tipo, quantity: m.tipo==='venta_calculada' ? 0 : m.sentido==='salida' && ['reposicion','horneado','ajuste'].includes(m.tipo) ? -m.cantidad : m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.responsables?{responsibles:m.responsables}:{}), ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}), ...(m.id_lote ? {lotId:String(m.id_lote)} : {}) })),
   };
 }
 
@@ -95,7 +99,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
   return pgTransaction(async client => {
     await assertInventoryWritable();
     const before = await readPg(client);
-    const repeated=['produceBatch','replenishBatch','correctProduction','addWaiters','replaceWaiter'].includes(command.type)&&command.operationId!==undefined;
+    const repeated=['produceBatch','replenishBatch','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
     const operationId=repeated?String(command.operationId):undefined;
     if(operationId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))throw new AccessError('Identificador de operación inválido.',400);
     const {revision:ignoredRevision,...payload}=command;
@@ -143,20 +147,20 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     const displayUnit = 'pieza';
     const frozenUnit = 'pieza';
     const operation = crypto.randomUUID();
-    async function movement(options: { productId: string; lotId?: string; location: 'congelador' | 'mostrador'; shiftId?: string; type: string; direction: 'entrada' | 'salida'; quantity: number; unit: string; user: number; note?: string; at?: string; operationId?:string; team?:string[] }) {
+    async function movement(options: { productId: string; lotId?: string; location: 'congelador' | 'mostrador' | 'horneados'; shiftId?: string; type: string; direction: 'entrada' | 'salida'; quantity: number; unit: string; user: number; note?: string; at?: string; operationId?:string; team?:string[]; serviceDate?:string; period?:string }) {
       if (!options.quantity) return;
       const location = await client.query('SELECT id_ubicacion FROM ubicaciones WHERE tipo=$1 ORDER BY id_ubicacion', [options.location]);
       if (location.rowCount !== 1) throw new Error(`Debe existir exactamente una ubicación de tipo ${options.location} para esta beta.`);
-      await client.query(`INSERT INTO movimiento_inventario (id_producto,id_lote,id_ubicacion,id_turno,tipo,sentido,cantidad,unidad,id_operacion,id_usuario,motivo,creado_en,responsables)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::timestamptz,CURRENT_TIMESTAMP),$13)`,
-      [options.productId, options.lotId ?? null, location.rows[0].id_ubicacion, options.shiftId ?? null, options.type, options.direction, options.quantity, options.unit, options.operationId??operation, options.user, options.note ?? null, options.at ?? null,options.team??null]);
+      await client.query(`INSERT INTO movimiento_inventario (id_producto,id_lote,id_ubicacion,id_turno,tipo,sentido,cantidad,unidad,id_operacion,id_usuario,motivo,creado_en,responsables,fecha_operativa,periodo_cocina)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::timestamptz,CURRENT_TIMESTAMP),$13,$14,$15)`,
+      [options.productId, options.lotId ?? null, location.rows[0].id_ubicacion, options.shiftId ?? null, options.type, options.direction, options.quantity, options.unit, options.operationId??operation, options.user, options.note ?? null, options.at ?? null,options.team??null,options.serviceDate??null,options.period??null]);
     }
     const newLog: Movement | undefined = after.movements.length > before.movements.length ? after.movements[0] : undefined;
     const priorLogs=new Set(before.movements.map(m=>m.id));
     const newLogs=after.movements.filter(m=>!priorLogs.has(m.id));
     if(command.type==='productStatus'){
       await client.query('UPDATE productos SET activo=$1 WHERE id_producto=$2',[product!.active!==false,product!.id]);
-      if(product!.active&&active&&!before.shifts.find(s=>s.id===active.id)!.rows.some(r=>r.productId===product!.id))await client.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) VALUES($1,$2,0)',[active.id,product!.id]);
+      if(product!.active&&active&&!isKitchenProduct(product!)&&!before.shifts.find(s=>s.id===active.id)!.rows.some(r=>r.productId===product!.id))await client.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) VALUES($1,$2,0)',[active.id,product!.id]);
     }else if(command.type==='productDelete'){
       await client.query('SELECT eliminar_producto_sin_historial($1)',[command.productId]);
     }else if (command.type === 'product') {
@@ -170,7 +174,8 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
       if (!category.rowCount) throw new Error('No se encontró la categoría del producto. Ejecuta npm run db:setup.');
       const inserted = await client.query('INSERT INTO productos (id_categoria,nombre_producto,rendimiento,stock_minimo,activo) VALUES ($1,$2,$3,$4,true) RETURNING id_producto', [category.rows[0].id_categoria, added.name, added.yield, added.minimum]);
       if (command.reserveMinimum !== undefined) await client.query('UPDATE productos SET stock_minimo_reserva=$1 WHERE id_producto=$2',[added.reserveMinimum ?? null,inserted.rows[0].id_producto]);
-      if (active) await client.query('INSERT INTO detalle_turno (id_turno,id_producto,entrada) VALUES ($1,$2,0)', [active.id, inserted.rows[0].id_producto]);
+      if(isKitchenProduct(added))await client.query('UPDATE productos SET solo_cocina=true WHERE id_producto=$1',[inserted.rows[0].id_producto]);
+      if (active&&!isKitchenProduct(added)) await client.query('INSERT INTO detalle_turno (id_turno,id_producto,entrada) VALUES ($1,$2,0)', [active.id, inserted.rows[0].id_producto]);
     } else if (command.type === 'open') {
       const shift = after.shifts.at(-1)!;
       const user = await responsibleId(client, shift.responsible, 'mostrador');
@@ -209,13 +214,20 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
         const inserted=await client.query('INSERT INTO lotes (id_producto,codigo,fecha_produccion,rendimiento,creado_por,observaciones) VALUES ($1,$2,$3,1,$4,$5) RETURNING id_lote',[lot.productId,lot.id,lot.producedAt,user,lot.note]);
         await movement({productId:lot.productId,lotId:String(inserted.rows[0].id_lote),location:'congelador',shiftId:active?.id,type:'produccion',direction:'entrada',quantity:lot.quantity,unit:frozenUnit,user,note:lot.note,at:log.at,operationId:log.id});
       }
+    } else if(command.type==='bakeBatch'||command.type==='useBaked'){
+      for(const log of newLogs){
+        const user=await responsibleId(client,log.responsible,'cocina');
+        const common={productId:log.productId,lotId:log.lotId,type:command.type==='bakeBatch'?'horneado':'consumo_cocina',quantity:log.quantity,unit:frozenUnit,user,note:log.note,at:log.at,operationId:log.id,serviceDate:log.serviceDate,period:log.period};
+        if(command.type==='bakeBatch')await movement({...common,location:'congelador',direction:'salida'});
+        await movement({...common,location:'horneados',direction:command.type==='bakeBatch'?'entrada':'salida'});
+      }
     } else if (command.type === 'replenish'||command.type==='replenishBatch') {
       for(const log of newLogs){
         const user=await responsibleId(client,active!.responsible,'mostrador');
-        const type=after.products.find(p=>p.id===log.productId)!.category==='Postres'?'reposicion':'horneado';
-        const note=`${log.quantity} unidades retiradas de producción del lote ${log.lotId} e ingresadas al mostrador.`;
+        const type='reposicion';
+        const note=`${log.quantity} unidades retiradas de ${log.source==='horneados'?'horneados':'producción'} del lote ${log.lotId} e ingresadas al mostrador.`;
         const common={productId:log.productId,lotId:log.lotId,shiftId:active!.id,type,quantity:log.quantity,user,note,operationId:log.id,team:shiftTeam(active!)};
-        await movement({...common,location:'congelador',direction:'salida',unit:frozenUnit});
+        await movement({...common,location:log.source==='horneados'?'horneados':'congelador',direction:'salida',unit:frozenUnit});
         await movement({...common,location:'mostrador',direction:'entrada',unit:displayUnit});
       }
     } else if(command.type==='correctProduction'){
@@ -233,8 +245,8 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
       if (delta) {
         const type = product!.category === 'Postres' ? 'reposicion' : 'horneado';
         for(const log of newLogs.filter(m=>m.type==='Corrección de ingreso')){
-          const common={productId:product!.id,lotId:log.lotId,shiftId:shift.id,type,quantity:Math.abs(log.quantity),user,note:log.note,operationId:log.id,team:shiftTeam(shift)};
-          await movement({...common,location:'congelador',direction:log.quantity>0?'salida':'entrada',unit:frozenUnit});
+          const common={productId:product!.id,lotId:log.lotId,shiftId:shift.id,type:log.source==='horneados'?'reposicion':type,quantity:Math.abs(log.quantity),user,note:log.note,operationId:log.id,team:shiftTeam(shift)};
+          await movement({...common,location:log.source==='horneados'?'horneados':'congelador',direction:log.quantity>0?'salida':'entrada',unit:frozenUnit});
           await movement({...common,location:'mostrador',direction:log.quantity>0?'entrada':'salida',unit:displayUnit});
         }
       }

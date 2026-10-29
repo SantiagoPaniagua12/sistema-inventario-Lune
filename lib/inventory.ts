@@ -1,15 +1,16 @@
+import {executeBaking,isKitchenProduct,bakedQuantity,oldestBakedLot,changeBaked,type BakedLot} from './baking';
 import { initialSupplies, executeSupplyCommand, type Supply, type SupplyMovement } from './supplies';
 import { executeExcelImport, type ExcelImport } from './excel-history';
 import {WAITERS} from './staff';
 import {normalizeCategory,productDeletionReason,reserveQuantity} from './catalog';
 
-export type Product = { active?:boolean; id: string; name: string; category: 'Postres' | 'Bollería'; yield: number; minimum: number; reserveMinimum?: number | null };
+export type Product = { kitchenOnly?:boolean; active?:boolean; id: string; name: string; category: 'Postres' | 'Bollería'; yield: number; minimum: number; reserveMinimum?: number | null };
 export type Lot = { id: string; productId: string; quantity: number; producedAt: string; note: string; yield?: number; responsible?: string; producedQuantity?:number };
 export type Row = { productId: string; opening: number; incoming: number; waste: number; closing: number | null };
 export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; responsibles?:string[]; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
-export type Movement = { id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; responsibles?:string[]; shiftId?: string; lotId?: string };
+export type Movement = { source?:'horneados'; serviceDate?:string; period?:'Mañana'|'Tarde'; id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; responsibles?:string[]; shiftId?: string; lotId?: string };
 export type TransferShift = Pick<Shift,'id'|'date'|'period'|'status'> & {rows: Pick<Row,'productId'|'incoming'>[]};
-export type State = { revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[];
+export type State = { baked?:BakedLot[]; revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[];
   replenishment?:{productId:string;maximum:number}[];transferShifts?:TransferShift[];visibility?:{display:boolean;reserve:boolean} };
 export type Command = { type: string; revision: number; [key: string]: unknown };
 export const limaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -42,6 +43,7 @@ function required(value: unknown, label: string) {
   return value.trim();
 }
 export function execute(original: State, c: Command): State {
+  if(c.type==='bakeBatch'||c.type==='useBaked')return executeBaking(original,c);
   if (c.type === 'excelImport') return executeExcelImport(original, c);
   if (typeof c.type === 'string' && c.type.startsWith('supply')) return executeSupplyCommand(original, c);
   if (c.revision !== original.revision) throw new Error('Los datos cambiaron. Actualiza la página y vuelve a intentar.');
@@ -61,13 +63,14 @@ export function execute(original: State, c: Command): State {
       if(c.type==='produceBatch')next=execute(next,{type:'produce',revision:next.revision,...item,date:c.date,responsible:c.responsible});
       else{
         if(!active)throw new Error('Necesitas un turno abierto.');
-        const stock=next.lots.filter(lot=>lot.productId===item.productId).reduce((sum,lot)=>sum+lot.quantity,0);
+        const baked=next.products.find(p=>p.id===item.productId)!.category==='Bollería';
+        const stock=baked?bakedQuantity(next,item.productId):next.lots.filter(lot=>lot.productId===item.productId).reduce((sum,lot)=>sum+lot.quantity,0);
         if(stock<item.quantity)throw new Error(`${original.products.find(p=>p.id===item.productId)!.name}: no hay suficiente stock en reserva (${stock} disponibles).`);
         let remaining=item.quantity;
         while(remaining){
-          const lot=oldestAvailableLot(next.lots,item.productId)!;
+          const lot=baked?oldestBakedLot(next,item.productId)!:oldestAvailableLot(next.lots,item.productId)!;
           const quantity=Math.min(remaining,lot.quantity);
-          next=execute(next,{type:'replenish',revision:next.revision,productId:item.productId,lotId:lot.id,quantity,responsible:shiftTeam(active)[0]});
+          next=execute(next,{type:'replenish',revision:next.revision,productId:item.productId,lotId:'id' in lot?lot.id:lot.lotId,quantity,responsible:shiftTeam(active)[0]});
           remaining-=quantity;
         }
       }
@@ -89,7 +92,7 @@ export function execute(original: State, c: Command): State {
     if (previous && (date < previous.date || (date === previous.date && (previous.period === 'Tarde' || c.period === 'Mañana')))) throw new Error('El turno debe ser posterior al último cierre.');
     const initial = c.openings as Record<string, unknown> | undefined;
     const team=c.responsibles===undefined?undefined:waiterNames(c.responsibles,c.period==='Tarde'?2:1);
-    s.shifts.push({ id: uid(), date, period: c.period, responsible: team?.[0]??required(c.responsible, 'Responsable'), ...(team?{responsibles:team}:{}), status: 'open', openedAt: new Date().toISOString(), rows: s.products.filter(p=>p.active!==false||reserveQuantity(s,p.id)>0||(previous?.rows.find(r=>r.productId===p.id)?.closing??0)>0).map(p => ({ productId: p.id, opening: previous ? previous.rows.find(r => r.productId === p.id)?.closing ?? 0 : integer(initial?.[p.id] ?? 0, 'Conteo inicial'), incoming: 0, waste: 0, closing: null })) });
+    s.shifts.push({ id: uid(), date, period: c.period, responsible: team?.[0]??required(c.responsible, 'Responsable'), ...(team?{responsibles:team}:{}), status: 'open', openedAt: new Date().toISOString(), rows: s.products.filter(p=>!isKitchenProduct(p)&&(p.active!==false||reserveQuantity(s,p.id)>0||(previous?.rows.find(r=>r.productId===p.id)?.closing??0)>0)).map(p => ({ productId: p.id, opening: previous ? previous.rows.find(r => r.productId === p.id)?.closing ?? 0 : integer(initial?.[p.id] ?? 0, 'Conteo inicial'), incoming: 0, waste: 0, closing: null })) });
   } else if(c.type==='addWaiters'){
     if(!active)throw new Error('No hay un turno abierto.');
     const added=waiterNames(c.names);
@@ -127,7 +130,7 @@ export function execute(original: State, c: Command): State {
     const quantity=integer(c.quantity,'Cantidad producida corregida');
     const responsible=required(c.responsible,'Cocinero responsable');
     const reason=required(c.reason,'Motivo de la corrección');
-    const withdrawn=s.movements.filter(m=>m.lotId===lot.id&&['Retiro de producción','Horneado','Corrección de ingreso'].includes(m.type)).reduce((sum,m)=>sum+m.quantity,0);
+    const withdrawn=s.movements.filter(m=>m.lotId===lot.id&&['Retiro de producción','Horneado','Horneado en cocina','Corrección de ingreso'].includes(m.type)).reduce((sum,m)=>sum+m.quantity,0);
     const produced=lot.producedQuantity??lot.quantity+withdrawn;
     const consumed=produced-lot.quantity;
     if(quantity<consumed)throw new Error(`La producción no puede ser menor que las ${consumed} unidades que ya salieron de reserva.`);
@@ -140,15 +143,18 @@ export function execute(original: State, c: Command): State {
     if (!active || !product) throw new Error('Necesitas un turno abierto y un producto válido.');
     const quantity = integer(c.quantity, 'Unidades congeladas', 1);
     if (c.output !== undefined && c.output !== quantity) throw new Error('Ahora se cuenta por unidades: la cantidad que ingresa al mostrador debe ser igual a la retirada de producción.');
-    const lot = s.lots.find(l => l.id === c.lotId && l.productId === product.id);
-    if (lot && lot.id !== oldestAvailableLot(s.lots, product.id)?.id) throw new Error('Debes ingresar primero el lote más antiguo con stock de este producto.');
-    if (!lot || lot.quantity < quantity) throw new Error('El lote no tiene suficiente stock congelado.');
+    if(isKitchenProduct(product))throw new Error('Este producto se utiliza en platos desde Horneados; no ingresa al mostrador.');
+    const baked=product.category==='Bollería';
+    const lot=baked?(s.baked??[]).find(l=>l.lotId===c.lotId&&l.productId===product.id):s.lots.find(l=>l.id===c.lotId&&l.productId===product.id);
+    const oldest=baked?oldestBakedLot(s,product.id)?.lotId:oldestAvailableLot(s.lots,product.id)?.id;
+    if(lot&&c.lotId!==oldest)throw new Error('Debes ingresar primero el lote más antiguo con stock de este producto.');
+    if(!lot||lot.quantity<quantity)throw new Error(baked?'No hay suficientes unidades horneadas.':'El lote no tiene suficiente stock congelado.');
     const row=active.rows.find(r=>r.productId===product.id);
     if(!row||row.incoming+quantity>100000||available(row)+quantity>100000)throw new Error('El ingreso supera el límite permitido en el mostrador.');
-    lot.quantity -= quantity;
-    row.incoming += quantity;
-    log(product.category === 'Postres' ? 'Retiro de producción' : 'Horneado', quantity, `${quantity} unidades retiradas de producción del lote ${lot.id.slice(0, 8)} e ingresadas al mostrador.`, required(c.responsible ?? active.responsible,'Mozo responsable'));
-    s.movements[0].lotId = lot.id;
+    lot.quantity-=quantity;row.incoming+=quantity;
+    log(baked?'Ingreso de horneados':'Retiro de producción',quantity,`${quantity} unidades retiradas de ${baked?'horneados':'producción'} del lote ${String(c.lotId).slice(0,8)} e ingresadas al mostrador.`,required(c.responsible??active.responsible,'Mozo responsable'));
+    s.movements[0].lotId=String(c.lotId);
+    if(baked)s.movements[0].source='horneados';
     s.movements[0].responsibles=shiftTeam(active);
   } else if (c.type === 'correctShift') {
     const index = s.shifts.findIndex(shift => shift.id === c.shiftId);
@@ -156,7 +162,7 @@ export function execute(original: State, c: Command): State {
     if (!shift || !product) throw new Error('Selecciona un turno y producto válidos.');
     if (s.shifts.slice(index + 1).some(next => next.status === 'closed')) throw new Error('Solo puedes corregir el turno abierto o el último cierre.');
     const row = shift.rows.find(r => r.productId === product.id);
-    if (!row) throw new Error('El producto no pertenece a este turno.');
+    if (!row||isKitchenProduct(product)) throw new Error('El producto no pertenece al control de mostrador.');
     const responsible = required(c.responsible, 'Mozo responsable');
     const reason = required(c.reason, 'Motivo de la corrección');
     const incoming = integer(c.incoming, 'Ingreso corregido');
@@ -166,16 +172,17 @@ export function execute(original: State, c: Command): State {
     if (row.opening + incoming - row.waste < 0 || row.opening + incoming - row.waste > 100000 || (closing !== null && closing > row.opening + incoming - row.waste)) throw new Error('El cierre no puede superar el stock disponible ni producir ventas negativas.');
     const note = `Corrección: ingreso ${row.incoming} → ${incoming}; cierre ${row.closing ?? 'pendiente'} → ${closing ?? 'pendiente'}. Motivo: ${reason}`;
     if (delta) {
-      const candidates=s.lots.filter(l=>l.productId===product.id && (c.lotId===undefined || l.id===c.lotId)).sort((a,b)=>a.producedAt.localeCompare(b.producedAt));
-      if(delta<0)candidates.reverse();
+      const baked=product.category==='Bollería';
+      const logs=s.movements.filter(m=>m.shiftId===shift.id&&m.productId===product.id&&m.lotId&&['Retiro de producción','Horneado','Ingreso de horneados','Corrección de ingreso'].includes(m.type));
+      const allocations=delta>0?(baked?(s.baked??[]).filter(l=>l.productId===product.id&&l.quantity>0).sort((a,b)=>a.bakedAt.localeCompare(b.bakedAt)).map(l=>({lotId:l.lotId,source:'horneados' as const,quantity:l.quantity})):s.lots.filter(l=>l.productId===product.id&&l.quantity>0).sort((a,b)=>a.producedAt.localeCompare(b.producedAt)).map(l=>({lotId:l.id,source:undefined,quantity:l.quantity}))):Array.from(new Set(logs.map(m=>`${m.source??'congelador'}:${m.lotId}`))).map(key=>{const matching=logs.filter(m=>`${m.source??'congelador'}:${m.lotId}`===key);return {lotId:matching[0].lotId!,source:matching[0].source,quantity:matching.reduce((n,m)=>n+m.quantity,0)};});
       let remaining=Math.abs(delta);
-      for(const lot of candidates){
-        const withdrawn=s.movements.filter(m=>m.shiftId===shift.id&&m.productId===product.id&&m.lotId===lot.id&&['Retiro de producción','Horneado','Corrección de ingreso'].includes(m.type)).reduce((sum,m)=>sum+m.quantity,0);
-        const quantity=Math.min(remaining,delta>0?lot.quantity:Math.max(0,withdrawn));
-        if(!quantity)continue;
-        if(lot.quantity+(delta<0?quantity:-quantity)>100000)throw new Error('La reserva corregida supera el límite permitido.');
-        lot.quantity+=delta>0?-quantity:quantity;
-        s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,type:'Corrección de ingreso',quantity:delta>0?quantity:-quantity,note,responsible,responsibles:shiftTeam(shift),shiftId:shift.id,lotId:lot.id});
+      for(const lot of allocations){
+        if(c.lotId!==undefined&&lot.lotId!==c.lotId)continue;
+        const quantity=Math.min(remaining,Math.max(0,lot.quantity));if(!quantity)continue;
+        const change=delta>0?-quantity:quantity;
+        if(lot.source==='horneados')changeBaked(s,product.id,lot.lotId,change);
+        else{const frozen=s.lots.find(l=>l.id===lot.lotId)!;if(frozen.quantity+change>100000)throw new Error('La reserva corregida supera el límite permitido.');frozen.quantity+=change;}
+        s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,type:'Corrección de ingreso',quantity:delta>0?quantity:-quantity,note,responsible,responsibles:shiftTeam(shift),shiftId:shift.id,lotId:lot.lotId,...(lot.source?{source:lot.source}:{})});
         remaining-=quantity;if(!remaining)break;
       }
       if(remaining)throw new Error(delta>0?'No hay stock suficiente en reserva.':'No puedes devolver al lote más unidades de las retiradas en este turno.');
@@ -191,7 +198,9 @@ export function execute(original: State, c: Command): State {
     if (!active) throw new Error('No hay un turno abierto.');
     const counts = c.counts as Record<string, unknown> | undefined;
     for (const row of active.rows) {
-      const count = integer(counts?.[row.productId], 'Conteo de cierre');
+      const kitchen=isKitchenProduct(s.products.find(p=>p.id===row.productId)!);
+      if(kitchen&&available(row)!==0)throw new Error('Hay existencias anteriores de Cocina que requieren revisión.');
+      const count = kitchen?0:integer(counts?.[row.productId], 'Conteo de cierre');
       if (count > available(row)) throw new Error(`El cierre de ${s.products.find(p => p.id === row.productId)?.name} supera el stock disponible. Revisa los ingresos.`);
       row.closing = count;
     }
@@ -199,7 +208,7 @@ export function execute(original: State, c: Command): State {
   } else if(c.type==='productStatus'){
     if(!product||typeof c.active!=='boolean')throw new Error('Estado de producto inválido.');
     product.active=c.active;
-    if(c.active&&active&&!active.rows.some(r=>r.productId===product.id))active.rows.push({productId:product.id,opening:0,incoming:0,waste:0,closing:null});
+    if(c.active&&active&&!isKitchenProduct(product)&&!active.rows.some(r=>r.productId===product.id))active.rows.push({productId:product.id,opening:0,incoming:0,waste:0,closing:null});
   } else if(c.type==='productDelete'){
     const reason=productDeletionReason(s,String(c.productId));if(reason)throw new Error(reason);
     s.products=s.products.filter(p=>p.id!==c.productId);
@@ -213,7 +222,7 @@ export function execute(original: State, c: Command): State {
     const added: Product = { id: uid(), name, category, yield: 1, minimum: integer(c.minimum, 'Mínimo') };
     s.products.push(added);
     if (c.reserveMinimum !== undefined) added.reserveMinimum = c.reserveMinimum === null ? null : integer(c.reserveMinimum, 'Mínimo en reserva');
-    if (active) active.rows.push({ productId: added.id, opening: 0, incoming: 0, waste: 0, closing: null });
+    if (active&&!isKitchenProduct(added)) active.rows.push({ productId: added.id, opening: 0, incoming: 0, waste: 0, closing: null });
   } else if (c.type === 'product') {
     if (!product) throw new Error('Producto inválido.');
     product.name = required(c.name, 'Nombre');

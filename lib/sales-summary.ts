@@ -1,3 +1,4 @@
+import {isKitchenProduct} from './baking';
 import { available, type Product, type Shift } from './inventory';
 export function salesSummary(shift: Shift | undefined, products: Product[], counts: Record<string,string> = {}) {
   if (!shift) return { total: 0, counted: 0, pending: 0, items: [], complete: false };
@@ -15,7 +16,7 @@ export function salesSummary(shift: Shift | undefined, products: Product[], coun
 }
 
 export function dailyProductSales(date: string, shifts: Shift[], products: Product[], counts: Record<string,string> = {}, category:Product['category']|'Todos'='Todos') {
-  const desserts = products.filter(product => (category==='Todos'||product.category===category)&&(product.active!==false||shifts.some(s=>s.date===date&&s.rows.some(r=>r.productId===product.id))));
+  const desserts = products.filter(product => (!isKitchenProduct(product)||shifts.some(s=>s.date===date&&s.status==='closed'&&s.rows.some(r=>r.productId===product.id)))&&(category==='Todos'||product.category===category)&&(product.active!==false||shifts.some(s=>s.date===date&&s.rows.some(r=>r.productId===product.id))));
   const ids = new Set(desserts.map(product => product.id));
   const periods = (['Mañana', 'Tarde'] as const).map(period => {
     const source = shifts.find(shift => shift.date === date && shift.period === period);

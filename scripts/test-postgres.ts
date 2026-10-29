@@ -37,7 +37,7 @@ async function main() {
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '002_control.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '005_insumos.sql'), 'utf8'));
     await isolated.query(await readFile(path.join(process.cwd(), 'database', '007_alertas_excel.sql'), 'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql','019_horneados.sql'])await isolated.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${schema}".`));
     const seeder = await isolated.connect();
     try { await seedSupplies(seeder); } finally { seeder.release(); }
     await isolated.query(`INSERT INTO categorias(nombre_categoria) VALUES ('Postres'),('Bollería');
@@ -284,6 +284,28 @@ async function main() {
     console.log('OK: insumos de salón reutilizan productos existentes y conservan conteos, mínimos e historial sin duplicados.');
     s=await getPostgresState();
     console.log('OK: eliminación sin historial, productos desactivados, migración de kombuchas con y sin conteo, sobres conservados e idempotencia.');
+    // Horneados: persistencia real separada de congelados y mostrador.
+    await isolated.query("INSERT INTO ubicaciones(nombre_ubicacion,tipo) VALUES('Horneados en cocina','horneados')");
+    await mutate('produce',{productId:croissant,quantity:30,responsible:'Joel',date:limaDate()});
+    const bakeRequest={type:'bakeBatch',revision:s.revision,items:[{productId:croissant,quantity:10}],responsible:'Joel',date:limaDate(),period:'Mañana',operationId:crypto.randomUUID()};
+    s=await mutatePostgres(bakeRequest);const bakedRevision=s.revision;
+    s=await mutatePostgres(bakeRequest);assert.equal(s.revision,bakedRevision);
+    assert.equal(s.baked!.filter(l=>l.productId===croissant).reduce((n,l)=>n+l.quantity,0),10);
+    await mutate('replenishBatch',{items:[{productId:croissant,quantity:3}]});
+    assert.equal(s.lots.filter(l=>l.productId===croissant).reduce((n,l)=>n+l.quantity,0),20);
+    assert.equal(s.baked!.filter(l=>l.productId===croissant).reduce((n,l)=>n+l.quantity,0),7);
+    const openShift=s.shifts.find(sh=>sh.status==='open')!;
+    await mutate('correctShift',{shiftId:openShift.id,productId:croissant,incoming:2,responsible:'Shalu',reason:'Una unidad quedó en cocina'});
+    assert.equal(s.baked!.filter(l=>l.productId===croissant).reduce((n,l)=>n+l.quantity,0),8);
+    await mutate('createProduct',{name:'Focaccia',category:'Bollería',minimum:1});
+    const focaccia=s.products.find(p=>p.name==='Focaccia')!;assert.equal(focaccia.kitchenOnly,true);assert(!s.shifts.find(sh=>sh.id===openShift.id)!.rows.some(row=>row.productId===focaccia.id));
+    await mutate('produce',{productId:focaccia.id,quantity:8,responsible:'Joel',date:limaDate()});
+    await mutate('bakeBatch',{items:[{productId:focaccia.id,quantity:6}],responsible:'Joel',date:limaDate(),period:'Mañana'});
+    await mutate('useBaked',{productId:focaccia.id,quantity:2,responsible:'Alex',date:limaDate(),period:'Tarde'});
+    assert.equal(s.baked!.filter(l=>l.productId===focaccia.id).reduce((n,l)=>n+l.quantity,0),4);
+    assert.equal(s.movements.find(m=>m.type==='Uso en platos')!.period,'Tarde');assert.deepEqual(validateBackup(s),s);
+    const unchanged=structuredClone(s);await assert.rejects(()=>mutate('useBaked',{productId:focaccia.id,quantity:99,responsible:'Joel',date:limaDate(),period:'Tarde'}));assert.deepEqual(await getPostgresState(),unchanged);
+    console.log('OK: horneados separados, envío parcial, corrección al origen, uso en platos por turno y reintentos sin duplicados.');
     // Copia completa entre dos esquemas temporales: prueba el mismo proceso usado para Supabase.
     const sourceClient=await isolated.connect();
     let snapshot;
@@ -294,7 +316,7 @@ async function main() {
     await copyPool.query(await readFile(path.join(process.cwd(),'database','002_control.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','005_insumos.sql'),'utf8'));
     await copyPool.query(await readFile(path.join(process.cwd(),'database','007_alertas_excel.sql'),'utf8'));
-    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql','018_infusiones_decimales.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
+    for(const file of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql','018_infusiones_decimales.sql','019_horneados.sql'])await copyPool.query((await readFile(path.join(process.cwd(),'database',file),'utf8')).replaceAll('public.',`"${copySchema}".`));
     const targetClient=await copyPool.connect();
     try {
       await targetClient.query('BEGIN');await insertInventorySnapshot(targetClient,snapshot);await verifyInventorySnapshot(targetClient,snapshot);await targetClient.query('COMMIT');

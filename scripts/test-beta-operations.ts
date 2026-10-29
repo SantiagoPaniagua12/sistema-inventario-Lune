@@ -38,7 +38,7 @@ async function main(){
     const yesterday=new Date(Date.parse(`${limaDate()}T12:00:00Z`)-86400000).toISOString().slice(0,10);
     await isolated.query("INSERT INTO turnos(fecha,periodo,id_responsable,estado) VALUES($1,'tarde',1,'abierto')",[yesterday]);
     await isolated.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) SELECT 1,id_producto,0 FROM productos');
-    for(const name of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql'])await sql(name);
+    for(const name of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql','019_horneados.sql'])await sql(name);
     const admin:Actor={id:crypto.randomUUID(),name:'Administración',role:'admin',mustChangePassword:false};
     const salon:Actor={id:crypto.randomUUID(),name:'Salón',role:'mozo',mustChangePassword:false};
     const cocina:Actor={id:crypto.randomUUID(),name:'Cocina',role:'cocina',mustChangePassword:false};
