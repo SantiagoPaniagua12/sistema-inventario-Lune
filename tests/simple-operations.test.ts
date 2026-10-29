@@ -86,3 +86,25 @@ test('permisos de cuentas por área y operación automática sin identidades de 
   const command=authorizeCommand(salon,{type:'replenishBatch',revision:s.revision,operationId,responsible:'Intruso'},s);
   assert.equal(command.responsible,'Shalu');assert.deepEqual(command.responsibles,['Shalu']);
 });
+
+
+test('devolver reserva es independiente del orden de movimientos y de fechas empatadas',()=>{
+ for(const sameDate of [true,false]){
+  let s=opened();
+  const yesterday=new Date(Date.parse(`${date}T12:00:00Z`)-86400000).toISOString().slice(0,10);
+  s=run(s,'produce',{productId:'p1',quantity:2,responsible:'Joel',date:sameDate?date:yesterday});
+  s=run(s,'produce',{productId:'p1',quantity:10,responsible:'Joel',date});
+  s=run(s,'replenishBatch',{items:[{productId:'p1',quantity:5}]});
+  const frozen=structuredClone(s);
+  for(const movements of [frozen.movements,[...frozen.movements].reverse()]){
+   let corrected=run({...frozen,movements},'correctShift',{shiftId:s.shifts[0].id,productId:'p1',incoming:3,responsible:'Shalu',reason:'Dos unidades de más'});
+   assert.deepEqual(corrected.lots.map(l=>l.quantity),[0,9]);
+   assert.equal(corrected.shifts[0].rows[0].incoming,3);
+   corrected=run(corrected,'correctShift',{shiftId:s.shifts[0].id,productId:'p1',incoming:1,responsible:'Shalu',reason:'Devolver otras dos'});
+   assert.deepEqual(corrected.lots.map(l=>l.quantity),[1,10]);
+   corrected=run(corrected,'correctShift',{shiftId:s.shifts[0].id,productId:'p1',incoming:5,responsible:'Shalu',reason:'Reponer otra vez'});
+   assert.deepEqual(corrected.lots.map(l=>l.quantity),[0,7]);
+   assert.deepEqual(validateBackup(corrected),corrected);
+  }
+ }
+});

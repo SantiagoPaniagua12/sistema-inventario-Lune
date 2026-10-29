@@ -59,3 +59,21 @@ test('interfaz distingue horneados pendientes, uso de panes y formularios de Sal
  const form=renderToStaticMarkup(createElement(OperationDialog,{kind:'replenish',state:s,productId:'v1',busy:false,serverError:'',onSave:async()=>true,onClose:()=>{}}));assert(!form.includes('Focaccia'));assert(!form.includes('Pan para Tostada'));
  assert(isKitchenProduct({...s.products.find(p=>p.id==='f')!,name:'Renombrado',kitchenOnly:true}));
 });
+
+
+test('devolver bollería conserva el origen horneado y los saldos por lote con movimientos reordenados',()=>{
+ let s=fixture();s=produce(s,'v1',5);s=produce(s,'v1',6);s=bake(s,'v1',8);
+ // Separate baking times make the order explicit rather than depending on clock resolution.
+ s.baked![0].bakedAt='2020-01-01T10:00:00.000Z';s.baked![1].bakedAt='2020-01-01T11:00:00.000Z';
+ s=run(s,'replenishBatch',{items:[{productId:'v1',quantity:6}]});
+ const frozen=s.lots.map(l=>l.quantity),initial=structuredClone(s);
+ for(const movements of [initial.movements,[...initial.movements].reverse()]){
+  let corrected=run({...initial,movements},'correctShift',{shiftId:s.shifts[0].id,productId:'v1',incoming:3,responsible:'Shalu',reason:'Devolver tres'});
+  assert.deepEqual(corrected.baked!.map(l=>l.quantity),[2,3]);
+  assert.deepEqual(corrected.lots.map(l=>l.quantity),frozen);
+  assert.equal(corrected.shifts[0].rows.find(r=>r.productId==='v1')!.incoming,3);
+  corrected=run(corrected,'correctShift',{shiftId:s.shifts[0].id,productId:'v1',incoming:6,responsible:'Shalu',reason:'Reponer tres'});
+  assert.deepEqual(corrected.baked!.map(l=>l.quantity),[0,2]);
+  assert.deepEqual(corrected.lots.map(l=>l.quantity),frozen);
+ }
+});

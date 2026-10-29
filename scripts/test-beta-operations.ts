@@ -86,9 +86,18 @@ async function main(){
     await assert.rejects(()=>run('replenishBatch',{operationId:crypto.randomUUID(),items:[{productId:'1',quantity:1},{productId:'2',quantity:1}]}));
     assert.deepEqual(await getPostgresState(),afterBatch);
     await isolated.query('ALTER TABLE movimiento_inventario DROP CONSTRAINT fallo_batch');
+    // Fail the counter-side movement after the reserve return; both must roll back.
+    const lastMovement=Number((await isolated.query('SELECT MAX(id_movimiento_inventario) AS id FROM movimiento_inventario')).rows[0].id);
+    await isolated.query(`ALTER TABLE movimiento_inventario ADD CONSTRAINT fallo_devolucion CHECK(id_movimiento_inventario<=${lastMovement} OR NOT(tipo='reposicion' AND sentido='salida' AND id_producto=1 AND cantidad=2))`);
+    await assert.rejects(()=>run('correctShift',{shiftId:morning.id,productId:'1',incoming:3,reason:'Probar devolución atómica'}));
+    assert.deepEqual(await getPostgresState(),afterBatch);
+    await isolated.query('ALTER TABLE movimiento_inventario DROP CONSTRAINT fallo_devolucion');
     await run('correctShift',{shiftId:morning.id,productId:'1',incoming:3,reason:'Se ingresaron dos unidades de más'});
     assert.equal(state.lots.find(l=>l.id===oldest)!.quantity,0);
     assert.equal(state.lots.find(l=>l.id===newer)!.quantity,9);
+    assert.equal(state.lots.filter(l=>l.productId==='1').reduce((n,l)=>n+l.quantity,0),9);
+    assert.equal(state.shifts.find(s=>s.id===morning.id)!.rows.find(r=>r.productId==='1')!.incoming,3);
+    assert.deepEqual(await getPostgresState(),state);
     await run('correctShift',{shiftId:morning.id,productId:'1',incoming:5,reason:'Restaurar ingreso para el escenario siguiente'});
     assert.equal(state.lots.find(l=>l.id===newer)!.quantity,7);
     await assert.rejects(()=>run('correctProduction',{operationId:crypto.randomUUID(),lotId:oldest,quantity:1,responsible:'Joel',reason:'No se puede reducir lo consumido'},cocina));

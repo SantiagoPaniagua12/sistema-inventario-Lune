@@ -49,7 +49,6 @@ export function validateBackup(value: unknown): State {
     const productId = id(l.productId);
     if (!productIds.has(productId)) fail();
     const producedQuantity=l.producedQuantity===undefined?undefined:number(l.producedQuantity);
-    if(producedQuantity!==undefined&&producedQuantity<number(l.quantity))fail();
     return { id: id(l.id), productId, quantity: number(l.quantity), producedAt: date(l.producedAt), note: text(l.note, 180), ...(l.yield === undefined ? {} : { yield: number(l.yield, 1) }), ...(l.responsible === undefined ? {} : { responsible: name(l.responsible) }),...(producedQuantity===undefined?{}:{producedQuantity}) };
   });
   unique(lots.map(l => l.id));
@@ -87,9 +86,13 @@ export function validateBackup(value: unknown): State {
     if (shiftId && !shiftIds.has(shiftId)) fail();
     const lotId = m.lotId === undefined ? undefined : id(m.lotId);
     if (lotId && !lots.some(l=>l.id===lotId && l.productId===productId)) fail();
-    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, ['Corrección de ingreso','Corrección de producción'].includes(String(m.type)) ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(m.source===undefined?{}:{source:m.source==='horneados'?'horneados' as const:fail()}), ...(m.serviceDate===undefined?{}:{serviceDate:date(m.serviceDate),period:m.period==='Mañana'||m.period==='Tarde'?m.period as 'Mañana'|'Tarde':fail()}), ...(m.responsibles===undefined?{}:{responsibles:team(m.responsibles)}), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
+    return { id: id(m.id), at: timestamp(m.at), productId, type: id(m.type), quantity: number(m.quantity, ['Corrección de ingreso','Corrección de producción','Ajuste de reserva'].includes(String(m.type)) ? -100000 : m.type==='Corrección de cierre' ? 0 : 1), note: text(m.note), responsible: name(m.responsible), ...(m.source===undefined?{}:{source:m.source==='horneados'?'horneados' as const:fail()}), ...(m.serviceDate===undefined?{}:{serviceDate:date(m.serviceDate),period:m.period==='Mañana'||m.period==='Tarde'?m.period as 'Mañana'|'Tarde':fail()}), ...(m.responsibles===undefined?{}:{responsibles:team(m.responsibles)}), ...(shiftId ? { shiftId } : {}), ...(lotId ? {lotId} : {}) };
   });
   unique(movements.map(m => m.id));
+  for(const lot of lots){
+    const adjustment=movements.filter(m=>m.lotId===lot.id&&m.type==='Ajuste de reserva').reduce((n,m)=>n+m.quantity,0);
+    if(lot.producedQuantity!==undefined&&lot.quantity>lot.producedQuantity+adjustment)fail();
+  }
   const extra = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);
   const state: State = { revision: number(root.revision), products, lots, shifts, movements, ...extra };
   if(root.baked!==undefined){

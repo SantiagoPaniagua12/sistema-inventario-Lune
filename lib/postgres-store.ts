@@ -41,7 +41,7 @@ async function readPg(client: PoolClient): Promise<State> {
   const movements = await client.query(`SELECT m.*, u.nombre_usuario,b.tipo AS ubicacion_tipo,EXISTS(SELECT 1 FROM movimiento_inventario other JOIN ubicaciones ub USING(id_ubicacion) WHERE other.id_operacion=m.id_operacion AND ub.tipo='horneados') AS desde_horneados FROM movimiento_inventario m
     JOIN usuarios u USING (id_usuario) JOIN ubicaciones b USING (id_ubicacion)
     WHERE (m.tipo='produccion' AND m.sentido='entrada' AND b.tipo='congelador')
-    OR (m.tipo='ajuste' AND b.tipo='congelador' AND m.motivo LIKE 'Corrección de producción:%')
+    OR (m.tipo='ajuste' AND b.tipo='congelador' AND (m.motivo LIKE 'Corrección de producción:%' OR m.motivo LIKE 'Ajuste de reserva:%'))
     OR (m.tipo IN ('reposicion','horneado') AND b.tipo='mostrador')
     OR (m.tipo='venta_calculada' AND m.motivo LIKE 'Corrección:%' AND NOT EXISTS (SELECT 1 FROM movimiento_inventario other WHERE other.id_operacion=m.id_operacion AND other.tipo IN ('reposicion','horneado')))
     OR (m.tipo='merma' AND m.sentido='salida' AND b.tipo='mostrador')
@@ -59,7 +59,7 @@ async function readPg(client: PoolClient): Promise<State> {
     products: products.rows.map(p => ({ id: String(p.id_producto), name: p.nombre_producto, category: normalizeCategory(p.nombre_categoria)!, active:p.activo, ...(p.solo_cocina?{kitchenOnly:true}:{}), yield: p.rendimiento, minimum: p.stock_minimo, ...(p.stock_minimo_reserva === undefined ? {} : { reserveMinimum:p.stock_minimo_reserva }) })),
     lots: lots.rows.map(l => ({ id: String(l.id_lote), productId: String(l.id_producto), quantity: l.cantidad, producedQuantity:l.producidas, producedAt: day(l.fecha_produccion), note: l.observaciones ?? '', yield: l.rendimiento, responsible: l.nombre_usuario })),
     shifts: shifts.rows.map(s => ({ id: String(s.id_turno), date: day(s.fecha), period: s.periodo === 'manana' ? 'Mañana' : 'Tarde', responsible: s.nombre_usuario, responsibles:teams.rows.filter(t=>t.id_turno===s.id_turno).map(t=>t.nombre_usuario).length?teams.rows.filter(t=>t.id_turno===s.id_turno).map(t=>t.nombre_usuario):[s.nombre_usuario], status: s.estado === 'abierto' ? 'open' : 'closed', openedAt: timestamp(s.abierto_en), ...(s.cerrado_en ? { closedAt: timestamp(s.cerrado_en) } : {}), rows: details.rows.filter(d => d.id_turno === s.id_turno).map(d => ({ productId: String(d.id_producto), opening: d.entrada, incoming: d.ingresos, waste: d.mermas, closing: d.conteo_cierre })) })),
-    movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), ...(m.ubicacion_tipo==='mostrador'&&m.desde_horneados?{source:'horneados' as const}:{}),...(m.fecha_operativa?{serviceDate:day(m.fecha_operativa),period:m.periodo_cocina}:{}), type: m.ubicacion_tipo==='horneados'?(m.tipo==='consumo_cocina'?'Uso en platos':'Horneado en cocina'):m.tipo==='reposicion'&&m.desde_horneados&&!m.motivo?.startsWith('Corrección:')?'Ingreso de horneados':m.tipo==='ajuste'?'Corrección de producción':m.tipo==='venta_calculada' ? 'Corrección de cierre' : ['reposicion','horneado'].includes(m.tipo) && m.motivo?.startsWith('Corrección:') ? 'Corrección de ingreso' : movementTypes[m.tipo] ?? m.tipo, quantity: m.tipo==='venta_calculada' ? 0 : m.sentido==='salida' && ['reposicion','horneado','ajuste'].includes(m.tipo) ? -m.cantidad : m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.responsables?{responsibles:m.responsables}:{}), ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}), ...(m.id_lote ? {lotId:String(m.id_lote)} : {}) })),
+    movements: movements.rows.map(m => ({ id: String(m.id_operacion), at: timestamp(m.creado_en), productId: String(m.id_producto), ...(m.ubicacion_tipo==='mostrador'&&m.desde_horneados?{source:'horneados' as const}:{}),...(m.fecha_operativa?{serviceDate:day(m.fecha_operativa),period:m.periodo_cocina}:{}), type: m.ubicacion_tipo==='horneados'?(m.tipo==='consumo_cocina'?'Uso en platos':'Horneado en cocina'):m.tipo==='reposicion'&&m.desde_horneados&&!m.motivo?.startsWith('Corrección:')?'Ingreso de horneados':m.tipo==='ajuste'?(m.motivo?.startsWith('Ajuste de reserva:')?'Ajuste de reserva':'Corrección de producción'):m.tipo==='venta_calculada' ? 'Corrección de cierre' : ['reposicion','horneado'].includes(m.tipo) && m.motivo?.startsWith('Corrección:') ? 'Corrección de ingreso' : movementTypes[m.tipo] ?? m.tipo, quantity: m.tipo==='venta_calculada' ? 0 : m.sentido==='salida' && ['reposicion','horneado','ajuste'].includes(m.tipo) ? -m.cantidad : m.cantidad, note: m.motivo ?? '', responsible: m.nombre_usuario, ...(m.responsables?{responsibles:m.responsables}:{}), ...(m.id_turno ? { shiftId: String(m.id_turno) } : {}), ...(m.id_lote ? {lotId:String(m.id_lote)} : {}) })),
   };
 }
 
@@ -99,7 +99,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
   return pgTransaction(async client => {
     await assertInventoryWritable();
     const before = await readPg(client);
-    const repeated=['produceBatch','replenishBatch','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
+    const repeated=['produceBatch','replenishBatch','adjustReserve','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
     const operationId=repeated?String(command.operationId):undefined;
     if(operationId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))throw new AccessError('Identificador de operación inválido.',400);
     const {revision:ignoredRevision,...payload}=command;
@@ -230,6 +230,14 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
         await movement({...common,location:log.source==='horneados'?'horneados':'congelador',direction:'salida',unit:frozenUnit});
         await movement({...common,location:'mostrador',direction:'entrada',unit:displayUnit});
       }
+    } else if(command.type==='adjustReserve'){
+      const user=await responsibleId(client,String(command.responsible),'cocina');
+      const lotIds=new Map(before.lots.map(l=>[l.id,l.id]));
+      for(const lot of after.lots.filter(l=>!lotIds.has(l.id))){
+        const inserted=await client.query('INSERT INTO lotes (id_producto,codigo,fecha_produccion,rendimiento,creado_por,observaciones) VALUES ($1,$2,$3,1,$4,$5) RETURNING id_lote',[lot.productId,lot.id,lot.producedAt,user,lot.note]);
+        lotIds.set(lot.id,String(inserted.rows[0].id_lote));
+      }
+      for(const log of newLogs)await movement({productId:log.productId,lotId:lotIds.get(log.lotId!),location:'congelador',type:'ajuste',direction:log.quantity>0?'entrada':'salida',quantity:Math.abs(log.quantity),unit:frozenUnit,user,note:log.note,at:log.at,operationId:log.id});
     } else if(command.type==='correctProduction'){
       const log=newLog!;
       const user=await responsibleId(client,log.responsible,'cocina');

@@ -7,9 +7,9 @@ import {Plus,Check,X} from 'lucide-react';
 import {limaDate,shiftTeam,type State} from '@/lib/inventory';
 import {COOKS,WAITERS} from '@/lib/staff';
 
-export type OperationKind='open'|'produce'|'replenish'|'addWaiters'|'replaceWaiter'|'correctProduction';
-export const isOperationKind=(kind:string|null):kind is OperationKind=>['open','produce','replenish','addWaiters','replaceWaiter','correctProduction'].includes(kind??'');
-const titles:Record<OperationKind,string>={open:'Abrir turno',produce:'Agregar producción',replenish:'Ingresar al mostrador',addWaiters:'Agregar más mozos',replaceWaiter:'Cambiar mozo',correctProduction:'Corregir producción'};
+export type OperationKind='open'|'produce'|'replenish'|'addWaiters'|'replaceWaiter'|'correctProduction'|'adjustReserve';
+export const isOperationKind=(kind:string|null):kind is OperationKind=>['open','produce','replenish','addWaiters','replaceWaiter','correctProduction','adjustReserve'].includes(kind??'');
+const titles:Record<OperationKind,string>={open:'Abrir turno',produce:'Agregar producción',replenish:'Ingresar al mostrador',addWaiters:'Agregar más mozos',replaceWaiter:'Cambiar mozo',adjustReserve:'Ajustar unidades',correctProduction:'Corregir producción'};
 const dateLabel=(date:string)=>new Date(`${date}T12:00:00-05:00`).toLocaleDateString('es-PE',{dateStyle:'medium',timeZone:'America/Lima'});
 
 export function OperationDialog({kind,state,productId,busy,serverError,onSave,onClose}:{kind:OperationKind;state:State;productId:string;busy:boolean;serverError:string;onSave:(data:Record<string,unknown>,message:string)=>Promise<boolean>;onClose:()=>void}){
@@ -18,6 +18,8 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
   const [period,setPeriod]=useState<'Mañana'|'Tarde'>(initialPeriod);
   const [names,setNames]=useState<string[]>(Array(initialPeriod==='Tarde'&&kind==='open'?2:1).fill(''));
   const [quantities,setQuantities]=useState<Record<string,string>>({});
+  const reserveTotal=state.lots.filter(l=>l.productId===productId).reduce((n,l)=>n+l.quantity,0);
+  const [reserveCount,setReserveCount]=useState(String(reserveTotal));
   const [error,setError]=useState('');
   const [lotId,setLotId]=useState('');
   const [outgoing,setOutgoing]=useState(active?shiftTeam(active)[0]??'':'');
@@ -79,6 +81,13 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
       if(invalid){setError(`Revisa la cantidad de ${state.products.find(product=>product.id===invalid.productId)?.name}.`);return;}
       data={type:kind==='produce'?'produceBatch':'replenishBatch',items:entered,...(kind==='produce'?{date:fields.date,responsible:fields.responsible}:{})};
       message=kind==='produce'?`Producción guardada: ${total} unidades en ${entered.length} productos.`:`Ingresos guardados: ${total} unidades en ${entered.length} productos. La reserva quedó actualizada.`;
+    }else if(kind==='adjustReserve'){
+      const quantity=Number(reserveCount);
+      if(!reserveCount.trim()||!Number.isSafeInteger(quantity)||quantity<0||quantity>100000){setError('Total correcto: ingresa un entero entre 0 y 100000.');return;}
+      if(quantity===reserveTotal){setError('No hay cambios para guardar.');return;}
+      if(!String(fields.reason??'').trim()){setError('Escribe el motivo del ajuste.');return;}
+      data={type:'adjustReserve',productId,quantity,responsible:fields.responsible,reason:String(fields.reason).trim()};
+      message='Unidades ajustadas. La reserva y el historial están actualizados.';
     }else{
       if(!chosenLot){setError('No hay una producción registrada para corregir.');return;}
       data={type:'correctProduction',lotId:chosenLot.id,quantity:Number(fields.quantity),reason:fields.reason,responsible:fields.responsible};
@@ -110,6 +119,15 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
         <div className="batch-products"><div className={`batch-list-heading ${kind==='produce'?'production-row':''}`}><span>Producto</span>{kind==='replenish'&&<span>Disponibles para ingresar</span>}<span>{kind==='produce'?'Producidas':'A ingresar'}</span></div>{formProducts.map(product=><label className={`batch-product-row ${kind==='produce'?'production-row':''}`} key={product.id}><span>{product.name}{kind==='replenish'&&product.category==='Bollería'&&<small>Horneados en cocina</small>}</span>{kind==='replenish'&&<span className="batch-stock">{available(product.id)} uds.</span>}<ManualCountInput disabled={kind==='replenish'&&available(product.id)===0} title={kind==='replenish'&&available(product.id)===0?'Sin reserva disponible':undefined} data-product={product.id} aria-label={`${kind==='produce'?'Producción':'Ingreso al mostrador'} de ${product.name}`} min="0" max={kind==='produce'?100000:available(product.id)} step="1" placeholder="0" value={quantities[product.id]??''} onChange={event=>setQuantities(previous=>({...previous,[product.id]:event.target.value}))}/></label>)}</div>
         <p className="batch-total"><strong>{entered.length} productos · {total} unidades</strong><span>Los campos vacíos o en cero no generan movimientos.</span></p>
       </>}
+      {kind==='adjustReserve'&&<>
+        <p className="form-note"><strong>{selectedProduct?.name}</strong>. Escribe el total contado en reserva congelada.</p>
+        <p className="form-note">Total actual: <strong>{reserveTotal}</strong> unidades.</p>
+        <label>Total correcto<ManualCountInput name="quantity" required min="0" max="100000" step="1" value={reserveCount} onChange={event=>setReserveCount(event.target.value)}/></label>
+        {reserveCount.trim()&&Number.isSafeInteger(Number(reserveCount))&&Number(reserveCount)>=0&&Number(reserveCount)<=100000&&<p className="form-note" aria-live="polite">Disponibles: <strong>{reserveTotal} → {Number(reserveCount)}</strong>. Ajuste: <strong>{Number(reserveCount)>reserveTotal?'+':''}{Number(reserveCount)-reserveTotal}</strong> unidades.</p>}
+        <label>Cocinero responsable<select name="responsible" required defaultValue=""><option value="" disabled>Selecciona tu nombre</option>{COOKS.map(name=><option key={name}>{name}</option>)}</select></label>
+        <label>Motivo del ajuste<input name="reason" required maxLength={180} placeholder="Ej. Corrección del conteo físico"/></label>
+        <p className="form-note">El ajuste conserva la producción registrada y las ventas calculadas.</p>
+      </>}
       {kind==='correctProduction'&&<>
         <p className="form-note"><strong>{selectedProduct?.name}</strong>. Elige el registro por fecha y cantidad. Se conserva el historial de la corrección.</p>
         <label>Producción registrada<select value={chosenLot?.id??''} onChange={event=>setLotId(event.target.value)} disabled={!productLots.length}>{!productLots.length&&<option value="">Sin producción registrada</option>}{productLots.map((lot,index)=><option key={lot.id} value={lot.id}>{dateLabel(lot.producedAt)} · {lot.producedQuantity??lot.quantity} producidas · {lot.quantity} en reserva{index===0?' · Más reciente':''}</option>)}</select></label>
@@ -119,7 +137,7 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
       </>}
       {(error||serverError)&&<div className="alert error" role="alert">{error||serverError}</div>}
       </div>
-      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={onClose}>Cancelar</button><button className="primary" disabled={busy||(kind==='addWaiters'&&maxNames<1)||(kind==='correctProduction'&&!chosenLot)||(kind==='replaceWaiter'&&(!active||!outgoing||!replacement))}>{busy?'Guardando…':kind==='produce'?'Guardar producción':kind==='replenish'?'Guardar ingresos':kind==='open'?'Abrir turno':kind==='addWaiters'?'Agregar al turno':kind==='replaceWaiter'?'Guardar cambio':'Guardar corrección'}<Check size={16}/></button></div>
+      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={onClose}>Cancelar</button><button className="primary" disabled={busy||(kind==='addWaiters'&&maxNames<1)||(kind==='correctProduction'&&!chosenLot)||(kind==='replaceWaiter'&&(!active||!outgoing||!replacement))}>{busy?'Guardando…':kind==='produce'?'Guardar producción':kind==='replenish'?'Guardar ingresos':kind==='open'?'Abrir turno':kind==='addWaiters'?'Agregar al turno':kind==='replaceWaiter'?'Guardar cambio':kind==='adjustReserve'?'Guardar ajuste':'Guardar corrección'}<Check size={16}/></button></div>
     </fieldset></form>
   </section></div>;
 }

@@ -124,6 +124,30 @@ export function execute(original: State, c: Command): State {
     s.lots.push({ id: uid(), productId: product.id, quantity, producedQuantity:quantity, producedAt: date, note, yield: 1, responsible });
     log('Producción', quantity, note, responsible);
     s.movements[0].lotId=s.lots.at(-1)!.id;
+  } else if(c.type==='adjustReserve'){
+    if(!product)throw new Error('Selecciona un producto válido.');
+    const quantity=integer(c.quantity,'Total correcto');
+    const responsible=required(c.responsible,'Cocinero responsable');
+    const reason=required(c.reason,'Motivo del ajuste');
+    const lots=s.lots.filter(l=>l.productId===product.id).sort((a,b)=>a.producedAt.localeCompare(b.producedAt));
+    const previous=lots.reduce((sum,l)=>sum+l.quantity,0);
+    const delta=quantity-previous;
+    if(!delta)throw new Error('No hay cambios para guardar.');
+    const note=`Ajuste de reserva: ${previous} → ${quantity}. Motivo: ${reason}`;
+    const record=(lot:Lot,change:number)=>{
+      // Freeze the declared production of legacy lots before changing their balance.
+      lot.producedQuantity??=lot.quantity+s.movements.filter(m=>m.lotId===lot.id&&['Retiro de producción','Horneado','Horneado en cocina','Corrección de ingreso'].includes(m.type)).reduce((n,m)=>n+m.quantity,0)-s.movements.filter(m=>m.lotId===lot.id&&m.type==='Ajuste de reserva').reduce((n,m)=>n+m.quantity,0);
+      lot.quantity+=change;
+      s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:product.id,lotId:lot.id,type:'Ajuste de reserva',quantity:change,note,responsible});
+    };
+    if(delta<0){
+      let remaining=-delta;
+      for(const lot of lots){const change=Math.min(remaining,lot.quantity);if(change){record(lot,-change);remaining-=change;}if(!remaining)break;}
+    }else{
+      let lot=lots.at(-1);
+      if(!lot){lot={id:uid(),productId:product.id,quantity:0,producedQuantity:0,producedAt:limaDate(),note:'Conteo inicial por ajuste',yield:1,responsible};s.lots.push(lot);}
+      record(lot,delta);
+    }
   } else if(c.type==='correctProduction'){
     const lot=s.lots.find(item=>item.id===c.lotId);
     if(!lot)throw new Error('Selecciona un registro de producción válido.');
@@ -131,11 +155,13 @@ export function execute(original: State, c: Command): State {
     const responsible=required(c.responsible,'Cocinero responsable');
     const reason=required(c.reason,'Motivo de la corrección');
     const withdrawn=s.movements.filter(m=>m.lotId===lot.id&&['Retiro de producción','Horneado','Horneado en cocina','Corrección de ingreso'].includes(m.type)).reduce((sum,m)=>sum+m.quantity,0);
-    const produced=lot.producedQuantity??lot.quantity+withdrawn;
+    const adjustments=s.movements.filter(m=>m.lotId===lot.id&&m.type==='Ajuste de reserva').reduce((sum,m)=>sum+m.quantity,0);
+    const produced=lot.producedQuantity??lot.quantity+withdrawn-adjustments;
     const consumed=produced-lot.quantity;
     if(quantity<consumed)throw new Error(`La producción no puede ser menor que las ${consumed} unidades que ya salieron de reserva.`);
     const delta=quantity-produced;
     if(!delta)throw new Error('No hay cambios para guardar.');
+    if(lot.quantity+delta>100000)throw new Error('La reserva corregida supera el límite permitido.');
     lot.producedQuantity=quantity;lot.quantity+=delta;
     const previous=s.movements.find(m=>m.lotId===lot.id&&m.type==='Producción');
     s.movements.unshift({id:uid(),at:new Date().toISOString(),productId:lot.productId,type:'Corrección de producción',quantity:delta,lotId:lot.id,responsible,note:`Corrección de producción: ${produced} → ${quantity}. Motivo: ${reason}`,...(previous?.shiftId?{shiftId:previous.shiftId}:{})});
@@ -175,6 +201,15 @@ export function execute(original: State, c: Command): State {
       const baked=product.category==='Bollería';
       const logs=s.movements.filter(m=>m.shiftId===shift.id&&m.productId===product.id&&m.lotId&&['Retiro de producción','Horneado','Ingreso de horneados','Corrección de ingreso'].includes(m.type));
       const allocations=delta>0?(baked?(s.baked??[]).filter(l=>l.productId===product.id&&l.quantity>0).sort((a,b)=>a.bakedAt.localeCompare(b.bakedAt)).map(l=>({lotId:l.lotId,source:'horneados' as const,quantity:l.quantity})):s.lots.filter(l=>l.productId===product.id&&l.quantity>0).sort((a,b)=>a.producedAt.localeCompare(b.producedAt)).map(l=>({lotId:l.id,source:undefined,quantity:l.quantity}))):Array.from(new Set(logs.map(m=>`${m.source??'congelador'}:${m.lotId}`))).map(key=>{const matching=logs.filter(m=>`${m.source??'congelador'}:${m.lotId}`===key);return {lotId:matching[0].lotId!,source:matching[0].source,quantity:matching.reduce((n,m)=>n+m.quantity,0)};});
+      if(delta<0){
+        // Undo FIFO by lot age, independently of movement insertion/read order.
+        // Equal frozen dates retain registration order; baked ties match oldestBakedLot.
+        const returnOrder=new Map([
+          ...s.lots.toSorted((a,b)=>a.producedAt.localeCompare(b.producedAt)).map((l,index)=>[`congelador:${l.id}`,index] as const),
+          ...(s.baked??[]).toSorted((a,b)=>a.bakedAt.localeCompare(b.bakedAt)||a.lotId.localeCompare(b.lotId)).map((l,index)=>[`horneados:${l.lotId}`,index] as const),
+        ]);
+        allocations.sort((a,b)=>(returnOrder.get(`${b.source??'congelador'}:${b.lotId}`)??-1)-(returnOrder.get(`${a.source??'congelador'}:${a.lotId}`)??-1));
+      }
       let remaining=Math.abs(delta);
       for(const lot of allocations){
         if(c.lotId!==undefined&&lot.lotId!==c.lotId)continue;
