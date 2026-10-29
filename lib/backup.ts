@@ -93,7 +93,8 @@ export function validateBackup(value: unknown): State {
     const adjustment=movements.filter(m=>m.lotId===lot.id&&m.type==='Ajuste de reserva').reduce((n,m)=>n+m.quantity,0);
     if(lot.producedQuantity!==undefined&&lot.quantity>lot.producedQuantity+adjustment)fail();
   }
-  const extra = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);
+  const extra: Pick<State,'supplies'|'supplyMovements'> = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);
+  if(extra.supplyMovements?.some(m=>m.shiftId&&!shiftIds.has(m.shiftId)))fail();
   const state: State = { revision: number(root.revision), products, lots, shifts, movements, ...extra };
   if(root.baked!==undefined){
     state.baked=list(root.baked,10000).map(value=>{const b=record(value),productId=id(b.productId),lotId=id(b.lotId);

@@ -1,3 +1,4 @@
+import {executeFruitCommand,isFruitCommand} from './fruit-withdrawals';
 import {executeBaking,isKitchenProduct,bakedQuantity,oldestBakedLot,changeBaked,type BakedLot} from './baking';
 import { initialSupplies, executeSupplyCommand, type Supply, type SupplyMovement } from './supplies';
 import { executeExcelImport, type ExcelImport } from './excel-history';
@@ -43,6 +44,7 @@ function required(value: unknown, label: string) {
   return value.trim();
 }
 export function execute(original: State, c: Command): State {
+  if(isFruitCommand(c.type))return executeFruitCommand(original,c);
   if(c.type==='bakeBatch'||c.type==='useBaked')return executeBaking(original,c);
   if (c.type === 'excelImport') return executeExcelImport(original, c);
   if (typeof c.type === 'string' && c.type.startsWith('supply')) return executeSupplyCommand(original, c);

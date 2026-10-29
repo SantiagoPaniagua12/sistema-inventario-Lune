@@ -8,7 +8,7 @@ export async function inventoryForActor(state:State,actor:Actor){
  if(actor.role==='admin')return state;
  const ids=new Set<string>();
  if(state.supplyMovements?.length){
-  const result=await getPgPool().query(`SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(detalle->'history'->'supplyMovementIds')='array' THEN detalle->'history'->'supplyMovementIds' ELSE '[]'::jsonb END) AS id FROM auditoria_acceso WHERE auth_id=$1 AND accion='inventory.supplyMove'`,[actor.id]);
+  const result=await getPgPool().query(`SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(detalle->'history'->'supplyMovementIds')='array' THEN detalle->'history'->'supplyMovementIds' ELSE '[]'::jsonb END) AS id FROM auditoria_acceso WHERE auth_id=$1 AND accion IN ('inventory.supplyMove','inventory.supplyFruitWithdrawal','inventory.supplyFruitWithdrawalCorrection')`,[actor.id]);
   for(const row of result.rows)ids.add(row.id);
  }
  return visibleInventory(state,actor,ids);

@@ -14,7 +14,7 @@ export function canViewSection(role:Role,section:InventorySection){
 export function visibleInventory(state:State,actor:Actor,ownSupplyMovementIds:ReadonlySet<string>=new Set()):State{
   if(actor.role==='admin')return state;
   const common={revision:state.revision,products:state.products,supplies:state.supplies,
-    supplyMovements:state.supplyMovements?.filter(m=>ownSupplyMovementIds.has(m.id)),movements:[],excelImports:[]};
+    supplyMovements:state.supplyMovements?.filter(m=>ownSupplyMovementIds.has(m.id)||actor.role==='mozo'&&!!m.withdrawalId),movements:[],excelImports:[]};
   if(actor.role==='mozo')return {...common,products:state.products.map(({reserveMinimum:_private,...product})=>product),
     excelImports:state.excelImports?.map(batch=>({...batch,records:batch.records.filter(r=>r.kind==='turno')})).filter(batch=>batch.records.length),
     shifts:state.shifts,lots:[],visibility:{display:true,reserve:false},

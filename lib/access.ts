@@ -1,4 +1,5 @@
 import {shiftTeam,waiterNames,type Command,type State} from './inventory';
+import {fruitWithdrawals,isFruitCommand} from './fruit-withdrawals';
 import {COOKS,WAITERS} from './staff';
 export const ROLES = ['admin', 'cocina', 'mozo'] as const;
 export type Role = typeof ROLES[number];
@@ -17,6 +18,24 @@ export function authorizeCommand(actor: Actor, command: Command, state: State): 
   const active = state.shifts.find(s => s.status === 'open');
   const kitchen=actor.role==='admin'||actor.role==='cocina';
   const salon=actor.role==='admin'||actor.role==='mozo';
+  if(isFruitCommand(command.type)){
+    if(!salon)throw new AccessError();
+    delete next.allowClosed;
+    const correction=command.type==='supplyFruitWithdrawalCorrection';
+    const withdrawal=correction?fruitWithdrawals(state).find(w=>w.id===command.withdrawalId):undefined;
+    if(correction&&!withdrawal)throw new AccessError('Retiro de fruta inválido.',400);
+    const shift=state.shifts.find(s=>s.id===(withdrawal?.shiftId??command.shiftId));
+    if(!shift||command.shiftId!==shift.id)throw new AccessError('Turno del retiro inválido.',400);
+    if(shift.status==='closed'){
+      if(!correction||actor.role!=='admin')throw new AccessError('Solo Administración puede corregir retiros de turnos cerrados.');
+      next.allowClosed=true;next.responsible=actor.name.slice(0,80);
+    }else{
+      next.responsible=selectedStaff('mozo',command.responsible);
+      if(!shiftTeam(shift).includes(next.responsible as string))throw new AccessError('Selecciona un mozo del equipo del turno.',400);
+    }
+    if(typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
+    return next;
+  }
   if(['produce','produceBatch','adjustReserve','correctProduction','bakeBatch','useBaked'].includes(command.type)&&kitchen)next.responsible=selectedStaff('cocina',command.responsible);
   else if(command.type==='open'&&salon){
     try{next.responsibles=waiterNames(command.responsibles,command.period==='Tarde'?2:1);}catch(error){throw new AccessError((error as Error).message,400);}

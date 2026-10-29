@@ -1,0 +1,105 @@
+import {loadEnvConfig} from '@next/env';
+import {Pool} from 'pg';
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import {getPgPool,databaseError} from '../lib/postgres';
+import {getPostgresState,mutatePostgres} from '../lib/postgres-store';
+import {validateBackup} from '../lib/backup';
+import {fruitWithdrawals} from '../lib/fruit-withdrawals';
+import {limaDate,type State} from '../lib/inventory';
+import type {Actor} from '../lib/access';
+import {inventoryForActor,readOperationHistory} from '../lib/operation-history-store';
+import {seedSupplies} from '../lib/supplies-store';
+import {getClosingDraft,saveClosingDraft,DraftConflictError} from '../lib/closing-drafts';
+
+loadEnvConfig(process.cwd());
+process.env.INVENTORY_STORAGE='postgres';
+if(!['localhost','127.0.0.1','::1'].includes(process.env.PGHOST||'localhost'))throw new Error('Solo PostgreSQL local de prueba.');
+async function main(){
+  const pool=getPgPool();
+  const schema=`lune_fruits_${crypto.randomUUID().replaceAll('-','')}`;
+  const globals=globalThis as typeof globalThis&{lunePgPool?:Pool};
+  let isolated:Pool|undefined;
+  let created=false;
+  try{
+    await pool.query(`CREATE SCHEMA "${schema}"`);created=true;
+    isolated=new Pool({...pool.options,options:`-c timezone=America/Lima -c search_path=${schema}`,max:4});
+    globals.lunePgPool=isolated;
+    const sql=async(name:string)=>{await isolated!.query((await readFile(`database/${name}`,'utf8')).replaceAll('public.',`"${schema}".`));};
+    for(const name of ['schema.sql','002_control.sql','005_insumos.sql','007_alertas_excel.sql'])await sql(name);
+    const client=await isolated.connect();try{await seedSupplies(client);}finally{client.release();}
+    await isolated.query(`CREATE TABLE perfiles_acceso(auth_id uuid PRIMARY KEY,nombre text,rol text,activo boolean,cambiar_password boolean,version_acceso integer DEFAULT 1);
+      CREATE TABLE auditoria_acceso(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,auth_id uuid,accion text,detalle jsonb,creado_en timestamptz DEFAULT now());
+      CREATE TABLE sesiones_revocadas(session_id uuid PRIMARY KEY,auth_id uuid);
+      CREATE TABLE sesiones_aplicacion(session_id uuid PRIMARY KEY,auth_id uuid,version_acceso integer);
+      CREATE TABLE limites_acceso(clave text PRIMARY KEY,intentos integer,vence_en timestamptz);
+      INSERT INTO categorias(nombre_categoria) VALUES('Postres'),('Bollería');
+      INSERT INTO ubicaciones(nombre_ubicacion,tipo) VALUES('Congelador','congelador'),('Mostrador','mostrador');
+      INSERT INTO usuarios(nombre_usuario,password_hash,rol,activo) VALUES('Shalu','!','mostrador',true);
+      INSERT INTO productos(id_categoria,nombre_producto,rendimiento,stock_minimo,activo) VALUES(1,'Pistacho prueba',1,1,true),(1,'Sacher prueba',1,1,true);`);
+    const yesterday=new Date(Date.parse(`${limaDate()}T12:00:00Z`)-86400000).toISOString().slice(0,10);
+    await isolated.query("INSERT INTO turnos(fecha,periodo,id_responsable,estado) VALUES($1,'tarde',1,'abierto')",[yesterday]);
+    await isolated.query('INSERT INTO detalle_turno(id_turno,id_producto,entrada) SELECT 1,id_producto,0 FROM productos');
+    for(const name of ['012_operacion_simple.sql','013_borradores.sql','015_catalogo_operacion.sql','016_insumos_salon.sql','017_cambio_mozo.sql','019_horneados.sql'])await sql(name);
+    const admin:Actor={id:crypto.randomUUID(),name:'Administración',role:'admin',mustChangePassword:false};
+    const salon:Actor={id:crypto.randomUUID(),name:'Salón',role:'mozo',mustChangePassword:false};
+    const cocina:Actor={id:crypto.randomUUID(),name:'Cocina',role:'cocina',mustChangePassword:false};
+    for(const actor of [admin,salon,cocina])await isolated.query('INSERT INTO perfiles_acceso VALUES($1,$2,$3,true,false,1)',[actor.id,actor.name,actor.role]);
+    let state:State=await getPostgresState();
+    assert.deepEqual(state.shifts[0].responsibles,['Shalu']);
+    const run=async(type:string,values:Record<string,unknown>,actor=salon)=>{
+      state=await mutatePostgres({type,revision:state.revision,operationId:crypto.randomUUID(),...values},actor);return state;
+    };
+    await run('close',{counts:{'1':0,'2':0}});
+    for(const supplyId of ['fruta-0','fruta-1','fruta-2'])await run('supplyMove',{supplyId,action:'conteo',quantity:10,responsible:'Joel'},cocina);
+    await run('open',{date:limaDate(),period:'Mañana',responsibles:['Shalu','Karla']});
+    const shiftId=state.shifts.at(-1)!.id;
+    const stock=(id='fruta-0')=>state.supplies!.find(f=>f.id===id)!.stock;
+    const initial=structuredClone(state);
+    await assert.rejects(()=>run('supplyFruitWithdrawal',{shiftId,supplyId:'fruta-0',quantity:2,responsible:'Shalu'}),/preparar los retiros/);
+    assert.deepEqual(await getPostgresState(),initial);
+    await sql('020_retiros_fruta.sql');await sql('020_retiros_fruta.sql');assert.deepEqual(await getPostgresState(),initial);
+    const withdrawal={type:'supplyFruitWithdrawal',revision:state.revision,operationId:crypto.randomUUID(),shiftId,supplyId:'fruta-0',quantity:5,responsible:'Shalu'};
+    state=await mutatePostgres(withdrawal,salon);assert.equal(stock(),5);
+    const rootId=fruitWithdrawals(state)[0].id,original=structuredClone(fruitWithdrawals(state)[0].logs[0]);
+    const afterWithdrawal=structuredClone(state);await mutatePostgres(withdrawal,salon);assert.deepEqual(await getPostgresState(),afterWithdrawal);
+    await assert.rejects(()=>mutatePostgres({...withdrawal,quantity:4},salon));
+    await assert.rejects(()=>mutatePostgres({...withdrawal,operationId:crypto.randomUUID()},salon),/cambiaron/);
+    const correction=(quantity:number,supplyId='fruta-0')=>({type:'supplyFruitWithdrawalCorrection',revision:state.revision,operationId:crypto.randomUUID(),shiftId,withdrawalId:rootId,withdrawalVersion:fruitWithdrawals(state).find(w=>w.id===rootId)!.logs[0].id,supplyId,quantity,responsible:'Karla',reason:'Corregir error'});
+    const corrected=correction(3);state=await mutatePostgres(corrected,salon);assert.equal(stock(),7);
+    const afterCorrection=structuredClone(state);await mutatePostgres(corrected,salon);assert.deepEqual(await getPostgresState(),afterCorrection);
+    await isolated.query("ALTER TABLE movimientos_insumos ADD CONSTRAINT fallo_fruta CHECK(NOT(retiro_fruta_id IS NOT NULL AND id_insumo='fruta-1' AND tipo='salida' AND cantidad=4))");
+    const replace=correction(4,'fruta-1');await assert.rejects(()=>mutatePostgres(replace,salon));assert.deepEqual(await getPostgresState(),afterCorrection);
+    await isolated.query('ALTER TABLE movimientos_insumos DROP CONSTRAINT fallo_fruta');
+    state=await mutatePostgres(replace,salon);assert.equal(stock(),10);assert.equal(stock('fruta-1'),6);
+    assert.deepEqual(state.supplyMovements!.find(m=>m.id===rootId),original);
+    assert.deepEqual(validateBackup(state),state);
+    const concurrent=[2,3].map(q=>correction(q,'fruta-1'));
+    const results=await Promise.allSettled(concurrent.map(c=>mutatePostgres(c,salon)));
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);state=await getPostgresState();
+    const snapshot=structuredClone(state);
+    await assert.rejects(()=>mutatePostgres(correction(2,'fruta-0'),cocina));
+    await assert.rejects(()=>mutatePostgres({...correction(2,'fruta-0'),responsible:'Santiago'},salon));
+    await assert.rejects(()=>mutatePostgres({...correction(2,'fruta-0'),withdrawalVersion:original.id},salon),/cambiaron/);
+    assert.deepEqual(await getPostgresState(),snapshot);
+    const stockAtClose=stock('fruta-1');await run('close',{counts:{'1':0,'2':0}});assert.equal(stock('fruta-1'),stockAtClose);
+    await run('open',{date:limaDate(),period:'Tarde',responsibles:['Shalu','Karla']});
+    const shifts=structuredClone(state.shifts);
+    await assert.rejects(()=>mutatePostgres({...correction(1,'fruta-1'),allowClosed:true},salon));
+    state=await mutatePostgres(correction(1,'fruta-1'),admin);assert.equal(stock('fruta-1'),9);
+    assert.deepEqual(state.shifts,shifts);
+    const view=await inventoryForActor(state,salon);assert.equal(fruitWithdrawals(view,shiftId)[0].quantity,1);
+    assert(view.supplyMovements!.every(m=>m.withdrawalId||m.responsible==='Shalu'||m.responsible==='Karla'));
+    const history=await readOperationHistory(new URLSearchParams(),admin,state);
+    const audit=history.entries.find(e=>e.action==='supplyFruitWithdrawalCorrection')!;
+    assert.equal(audit.summary.shift!.id,shiftId);assert.deepEqual(audit.summary.responsibles,[admin.name]);
+    state=await mutatePostgres({...correction(0,'fruta-1'),cancel:true},admin);assert.equal(stock('fruta-1'),10);
+    assert.equal(fruitWithdrawals(state,shiftId)[0].quantity,0);assert.deepEqual(validateBackup(state),state);
+    assert.deepEqual(await getPostgresState(),state);
+    console.log('OK: migración repetible, retiros, compensaciones, anulación, concurrencia, historial, permisos, cierre, reintentos, lectura de Salón y rollback en PostgreSQL aislado.');
+  }finally{
+    globals.lunePgPool=pool;await isolated?.end();
+    try{if(created)await pool.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await pool.end();}
+  }
+}
+main().catch(error=>{console.error('Falló la prueba aislada de frutas; Supabase no se utiliza.');console.error(databaseError(error).message);process.exitCode=1;});

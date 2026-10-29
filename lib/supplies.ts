@@ -7,7 +7,7 @@ export const SUPPLY_UNITS = ['porcion', 'bolsa', 'caja', 'botella', 'unidad', 'p
 export type SupplyGroup = typeof SUPPLY_GROUPS[number];
 export type SupplyUnit = typeof SUPPLY_UNITS[number];
 export type Supply = { active?:boolean; mergedInto?:string; id: string; name: string; group: SupplyGroup; unit: SupplyUnit; minimum: number | null; stock: number | null; capacityMl: number | null; packSize: number; note: string; estimated: boolean };
-export type SupplyMovement = { id: string; supplyId: string; action: 'entrada' | 'salida' | 'conteo'; quantity: number; before: number | null; after: number; responsible: string; note: string; estimated: boolean; at: string };
+export type SupplyMovement = { shiftId?:string;withdrawalId?:string; id: string; supplyId: string; action: 'entrada' | 'salida' | 'conteo'; quantity: number; before: number | null; after: number; responsible: string; note: string; estimated: boolean; at: string };
 export const unitLabel = (unit: SupplyUnit) => ({ porcion: 'porciones', bolsa: 'bolsas', caja: 'cajas', botella: 'botellas', unidad: 'unidades', paquete: 'paquetes', ml: 'ml', sobre:'sobres', rollo:'rollos' })[unit];
 const fractionalInfusionIds = new Set(['infusion-0', 'infusion-1', 'infusion-2', 'infusion-3', 'infusion-4', 'infusion-5']);
 /** Only the confirmed infusion catalogue uses fractions of a bag. Names may change. */
@@ -156,12 +156,26 @@ export function validateSupplyBackup(items: unknown, movements: unknown): { supp
     if (!m || typeof m.id !== 'string' || !m.id || movementIds.has(m.id) || !ids.has(m.supplyId) || !['entrada', 'salida', 'conteo'].includes(m.action) || typeof m.at !== 'string' || !Number.isFinite(Date.parse(m.at))) throw new Error('El historial de insumos no es válido.');
     movementIds.add(m.id);
     const item = suppliesById.get(m.supplyId)!;
-    const result: SupplyMovement = { id: m.id, supplyId: m.supplyId, action: m.action, quantity: amount(item, m.quantity, 'Cantidad', m.action === 'conteo' ? 0 : supplyDecimalPlaces(item) ? 0.01 : 1), before: m.before === null ? null : amount(item, m.before, 'Stock anterior'), after: amount(item, m.after, 'Stock posterior'), responsible: text(m.responsible, 'Responsable', 80), note: typeof m.note === 'string' ? m.note.slice(0, 500) : '', estimated: m.estimated === true, at: m.at };
+    const result: SupplyMovement = { id: m.id, supplyId: m.supplyId, action: m.action, quantity: amount(item, m.quantity, 'Cantidad', m.action === 'conteo' ? 0 : supplyDecimalPlaces(item) ? 0.01 : 1), before: m.before === null ? null : amount(item, m.before, 'Stock anterior'), after: amount(item, m.after, 'Stock posterior'), responsible: text(m.responsible, 'Responsable', 80), note: typeof m.note === 'string' ? m.note.slice(0, 500) : '', estimated: m.estimated === true, at: m.at, ...(m.shiftId===undefined?{}:{shiftId:text(m.shiftId,'Turno',100)}),...(m.withdrawalId===undefined?{}:{withdrawalId:text(m.withdrawalId,'Retiro',100)}) };
     if (result.action !== 'conteo' && result.before === null) throw new Error('Falta conteo inicial en el historial.');
     const expected = movementStock(item, result.action, result.quantity, result.before);
     if (result.after !== expected) throw new Error('El saldo del movimiento no es válido.');
     return result;
   });
+  const fruitRoots=new Map(supplyMovements.filter(m=>m.withdrawalId===m.id).map(m=>[m.id,m]));
+  const fruitBalances=new Map<string,Map<string,number>>();
+  for(const m of supplyMovements.toReversed()){
+    if((m.shiftId===undefined)!==(m.withdrawalId===undefined))throw new Error('Metadatos de retiro incompletos.');
+    if(m.withdrawalId){
+      const root=fruitRoots.get(m.withdrawalId);
+      if(!root||root.shiftId!==m.shiftId||root.action!=='salida'||m.action==='conteo'||suppliesById.get(m.supplyId)?.group!=='Frutas congeladas')throw new Error('Referencia de retiro de fruta inválida.');
+      const balances=fruitBalances.get(root.id)??new Map<string,number>();
+      const balance=(balances.get(m.supplyId)??0)+(m.action==='salida'?m.quantity:-m.quantity);
+      if(balance<0)throw new Error('La corrección devuelve más porciones que las retiradas.');
+      balances.set(m.supplyId,balance);fruitBalances.set(root.id,balances);
+    }
+  }
+  if([...fruitBalances.values()].some(balances=>[...balances.values()].filter(n=>n>0).length>1))throw new Error('Un retiro debe corresponder a una sola fruta.');
   for (const item of supplies) {
     const latest = supplyMovements.find(m => m.supplyId === item.id);
     if (latest && latest.after !== item.stock) throw new Error('El stock no coincide con el historial del respaldo.');

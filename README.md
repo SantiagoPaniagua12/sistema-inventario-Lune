@@ -20,6 +20,8 @@ Las seis infusiones por bolsa admiten centésimas en disponible, mínimo, conteo
 
 El flujo de bollería separa congelados, horneados en Cocina e ingresos al mostrador. Focaccia y pan para tostadas se descuentan por uso en platos. Ver [Horneados](docs/HORNEADOS.md).
 
+El bloque **Frutas congeladas** de Turno actual registra retiros por porciones, correcciones y anulaciones con historial. Administración puede corregir turnos cerrados. Consulta [Retiros de fruta](docs/RETIROS-DE-FRUTA.md) para preparar la base antes de habilitarlo.
+
 ## Inicio
 
 Requiere Node.js 20.9 o superior y npm.

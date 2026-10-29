@@ -1,5 +1,6 @@
 'use client';
 import {isKitchenProduct,bakedQuantity} from '@/lib/baking';
+import {FruitWorkspace} from './fruit-workspace';
 import {BakingWorkspace} from './baking-workspace';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
@@ -202,6 +203,7 @@ export default function Home({actor}:{actor:Actor}) {
         {view === 'Salidas al mostrador' && cook && <DisplayTransfers state={state}/>}
         {view === 'Alertas de inventario' && <StockAlertsPanel state={state}/>}
         {view === 'Importar Excel' && <ExcelImportWorkspace state={state} busy={interactionLocked} onCommand={command}/>}
+        {view==='Historial'&&admin&&<FruitWorkspace key="fruit-history" actor={actor} state={state} busy={interactionLocked} error={error} historical onCommand={command}/>}
         {view==='Historial'&&<AccountHistory actor={actor} revision={state.revision} onReviewShift={waiter?setHistoryId:undefined}/>}
         {(view === 'Turno actual' || view === 'Historial'&&(admin||waiter&&!!historyId)) && <>
           {view==='Turno actual'&&active&&<div className="team-strip"><div><strong>Equipo del turno · {shiftTeam(active).length}/4 mozos</strong><p>{shiftLabel(active)}</p></div>{waiter&&<div className="actions"><button className="secondary" disabled={interactionLocked} onClick={()=>show('replaceWaiter')}>Cambiar mozo</button><button className="secondary" disabled={interactionLocked||shiftTeam(active).length>=4} onClick={()=>show('addWaiters')}><Plus size={16}/>Agregar más mozos</button></div>}</div>}
@@ -221,6 +223,7 @@ export default function Home({actor}:{actor:Actor}) {
           })}</tbody></table>{products.length === 0 && <div className="empty">No hay productos con esa búsqueda.</div>}</div>
           <div className="table-footer"><span>{products.length} productos · Todas las cantidades en unidades</span><span>Entrada + ingresos − salida = venta calculada{total('waste') > 0 && ` (se descuentan ${total('waste')} unidades de ajustes anteriores)`}</span></div>
           </section>
+          {view==='Turno actual'&&waiter&&<FruitWorkspace key="fruit-current" actor={actor} state={state} busy={interactionLocked} error={error} onCommand={command}/>}
           {active && view === 'Turno actual' && waiter && <section className="closing-bar"><div><strong>Cuenta y cierra el turno.</strong><p>Los conteos se guardan automáticamente, aunque cierres sesión.</p><p className={`draft-status ${draft.status}`} role="status" aria-live="polite">{draftLabel}</p>{draft.error&&<p className="invalid-text">{draft.error}</p>}</div><div className="closing-team"><strong>Responsables</strong><br/>{shiftLabel(active)}</div><span className="count-progress">{counted}/{active.rows.length} contados</span><button className="primary" disabled={interactionLocked||!validCounts||draft.status==='loading'||draft.conflicts.length>0} onClick={()=>void closeShift()}><Check size={17}/>{closingBusy?'Guardando…':'Cerrar turno'}</button></section>}
           <p className="footnote"><CircleHelp size={15}/>La venta calculada incluye las unidades pagadas por trabajadores. La conexión con caja permitirá comparar los registros.</p>
            {view === 'Historial' && admin && <section className="panel movement-panel"><div className="panel-heading"><div><h2>Movimientos del turno</h2><p>Producción y unidades retiradas durante el turno seleccionado.</p></div></div><div className="table-wrap" role="region" aria-label="Movimientos del turno" tabIndex={0}><table><thead><tr><th>FECHA · HORA</th><th>PRODUCTO</th><th>MOVIMIENTO</th><th>CANTIDAD</th><th>DETALLE / RESPONSABLE</th></tr></thead><tbody>{historicalMovements.map(m => <tr key={m.id}><td>{new Date(m.at).toLocaleString('es-PE',{timeZone:'America/Lima'})}</td><td>{state.products.find(p => p.id === m.productId)?.name}</td><td>{m.type === 'Merma de mostrador' ? 'Ajuste histórico' : m.type}</td><td>{m.quantity}</td><td className="detail-cell">{m.note || '—'}<small>{m.responsibles?.join(', ')??m.responsible}</small></td></tr>)}</tbody></table>{!historicalMovements.length && <div className="empty">{historyId ? 'Este turno no tiene movimientos asociados.' : 'Selecciona un cierre para consultar sus movimientos.'}</div>}</div></section>}

@@ -1,3 +1,4 @@
+import {isFruitCommand} from './fruit-withdrawals';
 import {isKitchenProduct} from './baking';
 import type { PoolClient } from 'pg';
 import { execute, sales, personKey, shiftTeam, type State, type Command, type Movement } from './inventory';
@@ -99,7 +100,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
   return pgTransaction(async client => {
     await assertInventoryWritable();
     const before = await readPg(client);
-    const repeated=['produceBatch','replenishBatch','adjustReserve','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
+    const repeated=isFruitCommand(command.type)||['produceBatch','replenishBatch','adjustReserve','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
     const operationId=repeated?String(command.operationId):undefined;
     if(operationId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))throw new AccessError('Identificador de operación inválido.',400);
     const {revision:ignoredRevision,...payload}=command;
@@ -128,7 +129,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     async function recordAudit(persisted:State){
       if(actor){
         const summary=operationSummary(before,persisted,command);
-        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,outgoing:command.outgoing,replacement:command.replacement,operationId:command.operationId,area:actor.role,history:summary})]);
+        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,withdrawalId:command.withdrawalId,quantity:command.quantity,cancel:command.cancel,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,outgoing:command.outgoing,replacement:command.replacement,operationId:command.operationId,area:actor.role,history:summary})]);
       }
       return persisted;
     }
@@ -139,8 +140,14 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     }
     if (command.type.startsWith('supply')) {
       await persistSupplyCommand(client, before, after, command);
+      if(operationId)await client.query('INSERT INTO operaciones_inventario(id,auth_id,tipo,contenido_hash) VALUES($1,$2,$3,$4)',[operationId,actor?.id??null,command.type,contentHash]);
       await client.query('UPDATE inventario_control SET revision=revision+1 WHERE id=1');
-      return recordAudit(await readPg(client));
+      const persisted=await recordAudit(await readPg(client));
+      if(command.type==='supplyFruitWithdrawalCorrection'&&shiftBackupsEnabled()){
+        const shift=persisted.shifts.find(s=>s.id===command.shiftId);
+        if(shift?.status==='closed')await enqueueShiftBackup(client,persisted,shift,'correccion');
+      }
+      return persisted;
     }
     const active = before.shifts.find(s => s.status === 'open');
     const product = after.products.find(p => p.id === command.productId);
