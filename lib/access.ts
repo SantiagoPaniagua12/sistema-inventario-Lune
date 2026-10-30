@@ -18,6 +18,12 @@ export function authorizeCommand(actor: Actor, command: Command, state: State): 
   const active = state.shifts.find(s => s.status === 'open');
   const kitchen=actor.role==='admin'||actor.role==='cocina';
   const salon=actor.role==='admin'||actor.role==='mozo';
+  if(command.type==='correctLotDate'){
+    if(!kitchen)throw new AccessError();
+    const lot=state.lots.find(l=>l.id===command.lotId);
+    if(!lot)throw new AccessError('Selecciona un lote válido.',400);
+    next.productId=lot.productId;
+  }
   if(isFruitCommand(command.type)){
     if(!salon)throw new AccessError();
     delete next.allowClosed;
@@ -36,7 +42,7 @@ export function authorizeCommand(actor: Actor, command: Command, state: State): 
     if(typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
     return next;
   }
-  if(['produce','produceBatch','adjustReserve','correctProduction','bakeBatch','useBaked'].includes(command.type)&&kitchen)next.responsible=selectedStaff('cocina',command.responsible);
+  if(['produce','produceBatch','adjustReserve','correctLotDate','correctProduction','bakeBatch','useBaked'].includes(command.type)&&kitchen)next.responsible=selectedStaff('cocina',command.responsible);
   else if(command.type==='open'&&salon){
     try{next.responsibles=waiterNames(command.responsibles,command.period==='Tarde'?2:1);}catch(error){throw new AccessError((error as Error).message,400);}
     next.responsible=(next.responsibles as string[])[0];
@@ -68,6 +74,6 @@ export function authorizeCommand(actor: Actor, command: Command, state: State): 
     next.responsible = selectedStaff(actor.role,command.responsible);
   } else if(actor.role==='admin')return command;
   else throw new AccessError();
-  if(['produceBatch','replenishBatch','adjustReserve','correctProduction','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&& (typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId)))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
+  if(['produceBatch','replenishBatch','adjustReserve','correctLotDate','correctProduction','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&& (typeof command.operationId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(command.operationId)))throw new AccessError('Actualiza la página y vuelve a guardar la operación.',400);
   return next;
 }

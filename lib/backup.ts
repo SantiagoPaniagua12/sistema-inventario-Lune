@@ -96,6 +96,22 @@ export function validateBackup(value: unknown): State {
   const extra: Pick<State,'supplies'|'supplyMovements'> = root.supplies === undefined && root.supplyMovements === undefined ? {} : validateSupplyBackup(root.supplies, root.supplyMovements);
   if(extra.supplyMovements?.some(m=>m.shiftId&&!shiftIds.has(m.shiftId)))fail();
   const state: State = { revision: number(root.revision), products, lots, shifts, movements, ...extra };
+  if(root.lotDateCorrections!==undefined){
+    state.lotDateCorrections=list(root.lotDateCorrections,20000).map(value=>{
+      const c=record(value),lotId=id(c.lotId),productId=id(c.productId);
+      if(!lots.some(l=>l.id===lotId&&l.productId===productId))fail();
+      const previousDate=date(c.previousDate),correctedDate=date(c.date),reason=name(c.reason);
+      if(previousDate===correctedDate)fail();
+      return {id:id(c.id),lotId,productId,previousDate,date:correctedDate,responsible:name(c.responsible),reason,at:timestamp(c.at)};
+    });
+    unique(state.lotDateCorrections.map(c=>c.id));
+    const latestDates=new Map<string,string>();
+    for(const c of state.lotDateCorrections.toReversed()){
+      if(latestDates.has(c.lotId)&&latestDates.get(c.lotId)!==c.previousDate)fail();
+      latestDates.set(c.lotId,c.date);
+    }
+    for(const [lotId,correctedDate] of latestDates)if(lots.find(l=>l.id===lotId)?.producedAt!==correctedDate)fail();
+  }
   if(root.baked!==undefined){
     state.baked=list(root.baked,10000).map(value=>{const b=record(value),productId=id(b.productId),lotId=id(b.lotId);
       if(!products.some(p=>p.id===productId&&p.category==='Bollería')||!lots.some(l=>l.id===lotId&&l.productId===productId))fail();

@@ -6,12 +6,13 @@ import {WAITERS} from './staff';
 import {normalizeCategory,productDeletionReason,reserveQuantity} from './catalog';
 
 export type Product = { kitchenOnly?:boolean; active?:boolean; id: string; name: string; category: 'Postres' | 'Bollería'; yield: number; minimum: number; reserveMinimum?: number | null };
+export type LotDateCorrection={id:string;lotId:string;productId:string;previousDate:string;date:string;responsible:string;reason:string;at:string};
 export type Lot = { id: string; productId: string; quantity: number; producedAt: string; note: string; yield?: number; responsible?: string; producedQuantity?:number };
 export type Row = { productId: string; opening: number; incoming: number; waste: number; closing: number | null };
 export type Shift = { id: string; date: string; period: 'Mañana' | 'Tarde'; responsible: string; responsibles?:string[]; status: 'open' | 'closed'; rows: Row[]; openedAt?: string; closedAt?: string };
 export type Movement = { source?:'horneados'; serviceDate?:string; period?:'Mañana'|'Tarde'; id: string; at: string; productId: string; type: string; quantity: number; note: string; responsible: string; responsibles?:string[]; shiftId?: string; lotId?: string };
 export type TransferShift = Pick<Shift,'id'|'date'|'period'|'status'> & {rows: Pick<Row,'productId'|'incoming'>[]};
-export type State = { baked?:BakedLot[]; revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[];
+export type State = { lotDateCorrections?:LotDateCorrection[]; baked?:BakedLot[]; revision: number; products: Product[]; lots: Lot[]; shifts: Shift[]; movements: Movement[]; supplies?: Supply[]; supplyMovements?: SupplyMovement[]; excelImports?: ExcelImport[];
   replenishment?:{productId:string;maximum:number}[];transferShifts?:TransferShift[];visibility?:{display:boolean;reserve:boolean} };
 export type Command = { type: string; revision: number; [key: string]: unknown };
 export const limaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -150,6 +151,18 @@ export function execute(original: State, c: Command): State {
       if(!lot){lot={id:uid(),productId:product.id,quantity:0,producedQuantity:0,producedAt:limaDate(),note:'Conteo inicial por ajuste',yield:1,responsible};s.lots.push(lot);}
       record(lot,delta);
     }
+  } else if(c.type==='correctLotDate'){
+    const lot=s.lots.find(l=>l.id===c.lotId);
+    if(!lot)throw new Error('Selecciona un lote válido.');
+    if(c.expectedDate!==lot.producedAt)throw new Error('Los datos cambiaron en este lote. Actualiza y vuelve a abrir el formulario.');
+    const date=required(c.date,'Fecha de producción');
+    if(date<'0001-01-01'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date||date>limaDate())throw new Error('Fecha de producción inválida o futura.');
+    if(date===lot.producedAt)throw new Error('No hay cambios para guardar.');
+    const responsible=required(c.responsible,'Cocinero responsable');
+    const reason=required(c.reason,'Motivo de la corrección');
+    s.lotDateCorrections??=[];
+    s.lotDateCorrections.unshift({id:uid(),lotId:lot.id,productId:lot.productId,previousDate:lot.producedAt,date,responsible,reason,at:new Date().toISOString()});
+    lot.producedAt=date;
   } else if(c.type==='correctProduction'){
     const lot=s.lots.find(item=>item.id===c.lotId);
     if(!lot)throw new Error('Selecciona un registro de producción válido.');

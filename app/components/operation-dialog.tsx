@@ -7,9 +7,9 @@ import {Plus,Check,X} from 'lucide-react';
 import {limaDate,shiftTeam,type State} from '@/lib/inventory';
 import {COOKS,WAITERS} from '@/lib/staff';
 
-export type OperationKind='open'|'produce'|'replenish'|'addWaiters'|'replaceWaiter'|'correctProduction'|'adjustReserve';
-export const isOperationKind=(kind:string|null):kind is OperationKind=>['open','produce','replenish','addWaiters','replaceWaiter','correctProduction','adjustReserve'].includes(kind??'');
-const titles:Record<OperationKind,string>={open:'Abrir turno',produce:'Agregar producción',replenish:'Ingresar al mostrador',addWaiters:'Agregar más mozos',replaceWaiter:'Cambiar mozo',adjustReserve:'Ajustar unidades',correctProduction:'Corregir producción'};
+export type OperationKind='open'|'produce'|'replenish'|'addWaiters'|'replaceWaiter'|'correctProduction'|'adjustReserve'|'correctLotDate';
+export const isOperationKind=(kind:string|null):kind is OperationKind=>['open','produce','replenish','addWaiters','replaceWaiter','correctProduction','adjustReserve','correctLotDate'].includes(kind??'');
+const titles:Record<OperationKind,string>={open:'Abrir turno',produce:'Agregar producción',replenish:'Ingresar al mostrador',addWaiters:'Agregar más mozos',replaceWaiter:'Cambiar mozo',correctLotDate:'Modificar fecha de producción',adjustReserve:'Ajustar unidades',correctProduction:'Corregir producción'};
 const dateLabel=(date:string)=>new Date(`${date}T12:00:00-05:00`).toLocaleDateString('es-PE',{dateStyle:'medium',timeZone:'America/Lima'});
 
 export function OperationDialog({kind,state,productId,busy,serverError,onSave,onClose}:{kind:OperationKind;state:State;productId:string;busy:boolean;serverError:string;onSave:(data:Record<string,unknown>,message:string)=>Promise<boolean>;onClose:()=>void}){
@@ -22,6 +22,8 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
   const [reserveCount,setReserveCount]=useState(String(reserveTotal));
   const [error,setError]=useState('');
   const [lotId,setLotId]=useState('');
+  const datesAtOpen=useRef(new Map(state.lots.map(l=>[l.id,l.producedAt])));
+  const [correctedDate,setCorrectedDate]=useState<string|undefined>();
   const [outgoing,setOutgoing]=useState(active?shiftTeam(active)[0]??'':'');
   const [replacement,setReplacement]=useState('');
   const dialogRef=useRef<HTMLElement>(null);
@@ -32,6 +34,7 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
   const selectedProduct=state.products.find(product=>product.id===productId);
   const productLots=state.lots.filter(lot=>lot.productId===productId).toReversed();
   const chosenLot=productLots.find(lot=>lot.id===lotId)||productLots[0];
+  const dateChanged=kind==='correctLotDate'&&!!chosenLot&&chosenLot.producedAt!==datesAtOpen.current.get(chosenLot.id);
   const originalQuantity=chosenLot?.producedQuantity??(chosenLot?state.movements.filter(movement=>movement.productId===productId&&movement.lotId===chosenLot.id&&movement.type==='Producción').reduce((sum,movement)=>sum+movement.quantity,0):0);
   const available=(id:string)=>state.replenishment?.find(item=>item.productId===id)?.maximum??(state.products.find(p=>p.id===id)?.category==='Bollería'?bakedQuantity(state,id):state.lots.filter(lot=>lot.productId===id).reduce((sum,lot)=>sum+lot.quantity,0));
   const formProducts=state.products.filter(product=>(kind==='produce'||kind==='correctProduction'||!isKitchenProduct(product))&&(kind==='produce'?product.active!==false:kind==='replenish'?product.active!==false||active?.rows.some(row=>row.productId===product.id):product.active!==false));
@@ -88,6 +91,14 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
       if(!String(fields.reason??'').trim()){setError('Escribe el motivo del ajuste.');return;}
       data={type:'adjustReserve',productId,quantity,responsible:fields.responsible,reason:String(fields.reason).trim()};
       message='Unidades ajustadas. La reserva y el historial están actualizados.';
+    }else if(kind==='correctLotDate'){
+      if(!chosenLot){setError('No hay un lote registrado para corregir.');return;}
+      if(dateChanged){setError('Los datos cambiaron en este lote. Cierra y vuelve a abrir el formulario.');return;}
+      const date=String(fields.date??'');
+      if(date<'0001-01-01'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date||date>limaDate()){setError('Fecha de producción inválida o futura.');return;}
+      if(date===chosenLot.producedAt){setError('No hay cambios para guardar.');return;}
+      data={type:'correctLotDate',lotId:chosenLot.id,expectedDate:datesAtOpen.current.get(chosenLot.id),date,reason:fields.reason,responsible:fields.responsible};
+      message='Fecha de producción corregida. El historial quedó actualizado.';
     }else{
       if(!chosenLot){setError('No hay una producción registrada para corregir.');return;}
       data={type:'correctProduction',lotId:chosenLot.id,quantity:Number(fields.quantity),reason:fields.reason,responsible:fields.responsible};
@@ -128,6 +139,15 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
         <label>Motivo del ajuste<input name="reason" required maxLength={180} placeholder="Ej. Corrección del conteo físico"/></label>
         <p className="form-note">El ajuste conserva la producción registrada y las ventas calculadas.</p>
       </>}
+      {kind==='correctLotDate'&&<>
+        <p className="form-note"><strong>{selectedProduct?.name}</strong>. Selecciona el lote cuya fecha de producción necesitas corregir.</p>
+        <label>Lote<select name="lotId" value={chosenLot?.id??''} disabled={!productLots.length} onChange={event=>{setLotId(event.target.value);setCorrectedDate(undefined);setError('');}}>{!productLots.length&&<option value="">Sin lotes registrados</option>}{productLots.map(lot=><option key={lot.id} value={lot.id}>{dateLabel(lot.producedAt)} · {lot.producedQuantity??lot.quantity} producidas · {lot.quantity} disponibles{lot.quantity===0?' · Agotado':''}</option>)}</select></label>
+        {chosenLot&&<><p className="form-note">Fecha actual: <strong>{dateLabel(chosenLot.producedAt)}</strong>. {chosenLot.producedQuantity??chosenLot.quantity} producidas · {chosenLot.quantity} disponibles.</p><label>Fecha de producción correcta<input name="date" type="date" required min="0001-01-01" max={limaDate()} value={correctedDate??datesAtOpen.current.get(chosenLot.id)??chosenLot.producedAt} onChange={event=>setCorrectedDate(event.target.value)}/></label>{correctedDate&&/^\d{4}-\d{2}-\d{2}$/.test(correctedDate)&&Number.isFinite(Date.parse(correctedDate))&&<p className="form-note">Fecha de producción: <strong>{dateLabel(datesAtOpen.current.get(chosenLot.id)??chosenLot.producedAt)} → {dateLabel(correctedDate)}</strong>.</p>}</>}
+        <label>Cocinero que corrige<select name="responsible" required defaultValue=""><option value="" disabled>Selecciona tu nombre</option>{COOKS.map(name=><option key={name}>{name}</option>)}</select></label>
+        <label>Motivo de la corrección<input name="reason" required maxLength={180} placeholder="Ej. La producción fue del día anterior"/></label>
+        <p className="form-note">La nueva fecha se usará para los próximos retiros de reserva. Se conservan las cantidades, los retiros y los horneados ya registrados.</p>
+        {dateChanged&&<p className="alert error" role="alert">La fecha de este lote cambió en otra sesión. Cierra y vuelve a abrir el formulario.</p>}
+      </>}
       {kind==='correctProduction'&&<>
         <p className="form-note"><strong>{selectedProduct?.name}</strong>. Elige el registro por fecha y cantidad. Se conserva el historial de la corrección.</p>
         <label>Producción registrada<select value={chosenLot?.id??''} onChange={event=>setLotId(event.target.value)} disabled={!productLots.length}>{!productLots.length&&<option value="">Sin producción registrada</option>}{productLots.map((lot,index)=><option key={lot.id} value={lot.id}>{dateLabel(lot.producedAt)} · {lot.producedQuantity??lot.quantity} producidas · {lot.quantity} en reserva{index===0?' · Más reciente':''}</option>)}</select></label>
@@ -137,7 +157,7 @@ export function OperationDialog({kind,state,productId,busy,serverError,onSave,on
       </>}
       {(error||serverError)&&<div className="alert error" role="alert">{error||serverError}</div>}
       </div>
-      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={onClose}>Cancelar</button><button className="primary" disabled={busy||(kind==='addWaiters'&&maxNames<1)||(kind==='correctProduction'&&!chosenLot)||(kind==='replaceWaiter'&&(!active||!outgoing||!replacement))}>{busy?'Guardando…':kind==='produce'?'Guardar producción':kind==='replenish'?'Guardar ingresos':kind==='open'?'Abrir turno':kind==='addWaiters'?'Agregar al turno':kind==='replaceWaiter'?'Guardar cambio':kind==='adjustReserve'?'Guardar ajuste':'Guardar corrección'}<Check size={16}/></button></div>
+      <div className="modal-footer"><button className="secondary" type="button" disabled={busy} onClick={onClose}>Cancelar</button><button className="primary" disabled={busy||(kind==='correctLotDate'&&(!chosenLot||dateChanged))||(kind==='addWaiters'&&maxNames<1)||(kind==='correctProduction'&&!chosenLot)||(kind==='replaceWaiter'&&(!active||!outgoing||!replacement))}>{busy?'Guardando…':kind==='produce'?'Guardar producción':kind==='replenish'?'Guardar ingresos':kind==='open'?'Abrir turno':kind==='addWaiters'?'Agregar al turno':kind==='replaceWaiter'?'Guardar cambio':kind==='adjustReserve'?'Guardar ajuste':kind==='correctLotDate'?'Guardar fecha':'Guardar corrección'}<Check size={16}/></button></div>
     </fieldset></form>
   </section></div>;
 }

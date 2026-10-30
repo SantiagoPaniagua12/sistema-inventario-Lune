@@ -22,6 +22,8 @@ El flujo de bollería separa congelados, horneados en Cocina e ingresos al mostr
 
 El bloque **Frutas congeladas** de Turno actual registra retiros por porciones, correcciones y anulaciones con historial. Administración puede corregir turnos cerrados. Consulta [Retiros de fruta](docs/RETIROS-DE-FRUTA.md) para preparar la base antes de habilitarlo.
 
+En Reserva congelada, **Modificar fecha** permite corregir la fecha de producción de lotes nuevos, usados o agotados sin alterar cantidades ni movimientos anteriores. Ver [Fechas de lotes](docs/FECHAS-DE-LOTES.md) para el permiso mínimo de la conexión y las verificaciones.
+
 ## Inicio
 
 Requiere Node.js 20.9 o superior y npm.

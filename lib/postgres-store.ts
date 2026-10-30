@@ -99,8 +99,9 @@ async function responsibleId(client: PoolClient, name: string, role: 'cocina' | 
 export async function mutatePostgres(command: Command, actor?: Actor): Promise<State> {
   return pgTransaction(async client => {
     await assertInventoryWritable();
+    if(command.type==='correctLotDate'&&!actor)throw new AccessError('La corrección de fecha requiere una cuenta autenticada.');
     const before = await readPg(client);
-    const repeated=isFruitCommand(command.type)||['produceBatch','replenishBatch','adjustReserve','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
+    const repeated=isFruitCommand(command.type)||['produceBatch','replenishBatch','adjustReserve','correctLotDate','correctProduction','addWaiters','replaceWaiter','bakeBatch','useBaked'].includes(command.type)&&command.operationId!==undefined;
     const operationId=repeated?String(command.operationId):undefined;
     if(operationId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))throw new AccessError('Identificador de operación inválido.',400);
     const {revision:ignoredRevision,...payload}=command;
@@ -129,7 +130,7 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
     async function recordAudit(persisted:State){
       if(actor){
         const summary=operationSummary(before,persisted,command);
-        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,withdrawalId:command.withdrawalId,quantity:command.quantity,cancel:command.cancel,incoming:command.incoming,closing:command.closing,lotId:command.lotId,items:command.items,names:command.names,outgoing:command.outgoing,replacement:command.replacement,operationId:command.operationId,area:actor.role,history:summary})]);
+        await client.query('INSERT INTO auditoria_acceso(auth_id,accion,detalle) VALUES($1,$2,$3)',[actor.id,'inventory.'+command.type,JSON.stringify({revision:before.revision,productId:command.productId,supplyId:command.supplyId,responsable:command.responsible,responsables:summary.responsibles,shiftId:summary.shift?.id,reason:command.reason,withdrawalId:command.withdrawalId,quantity:command.quantity,cancel:command.cancel,incoming:command.incoming,closing:command.closing,lotId:command.lotId,date:command.type==='correctLotDate'?command.date:undefined,previousDate:command.type==='correctLotDate'?before.lots.find(l=>l.id===command.lotId)?.producedAt:undefined,items:command.items,names:command.names,outgoing:command.outgoing,replacement:command.replacement,operationId:command.operationId,area:actor.role,history:summary})]);
       }
       return persisted;
     }
@@ -245,6 +246,11 @@ export async function mutatePostgres(command: Command, actor?: Actor): Promise<S
         lotIds.set(lot.id,String(inserted.rows[0].id_lote));
       }
       for(const log of newLogs)await movement({productId:log.productId,lotId:lotIds.get(log.lotId!),location:'congelador',type:'ajuste',direction:log.quantity>0?'entrada':'salida',quantity:Math.abs(log.quantity),unit:frozenUnit,user,note:log.note,at:log.at,operationId:log.id});
+    } else if(command.type==='correctLotDate'){
+      const permission=await client.query("SELECT has_column_privilege(current_user,'lotes','fecha_produccion','UPDATE') AS allowed");
+      if(!permission.rows[0].allowed)throw new Error('Falta habilitar la corrección de fechas. Ejecuta npm run db:lot-dates -- --apply.');
+      const updated=await client.query('UPDATE lotes SET fecha_produccion=$1 WHERE id_lote=$2 AND fecha_produccion=$3',[command.date,command.lotId,command.expectedDate]);
+      if(updated.rowCount!==1)throw new Error('Los datos cambiaron en este lote. Actualiza y vuelve a intentar.');
     } else if(command.type==='correctProduction'){
       const log=newLog!;
       const user=await responsibleId(client,log.responsible,'cocina');
