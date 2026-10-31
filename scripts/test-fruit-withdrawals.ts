@@ -59,6 +59,27 @@ async function main(){
     await assert.rejects(()=>run('supplyFruitWithdrawal',{shiftId,supplyId:'fruta-0',quantity:2,responsible:'Shalu'}),/preparar los retiros/);
     assert.deepEqual(await getPostgresState(),initial);
     await sql('020_retiros_fruta.sql');await sql('020_retiros_fruta.sql');assert.deepEqual(await getPostgresState(),initial);
+    const batch={type:'supplyFruitWithdrawalBatch',revision:state.revision,operationId:crypto.randomUUID(),shiftId,responsible:'Karla',items:[{supplyId:'fruta-0',quantity:2},{supplyId:'fruta-1',quantity:1}]};
+    state=await mutatePostgres(batch,salon);assert.equal(stock(),8);assert.equal(stock('fruta-1'),9);assert.equal(state.revision,batch.revision+1);
+    assert.equal(fruitWithdrawals(state,shiftId).length,2);assert(fruitWithdrawals(state,shiftId).every(w=>w.responsible==='Karla'));
+    const savedBatch=structuredClone(state),batchAudits=Number((await isolated.query("SELECT count(*) AS n FROM auditoria_acceso WHERE accion='inventory.supplyFruitWithdrawalBatch'")).rows[0].n);
+    await mutatePostgres(batch,salon);assert.deepEqual(await getPostgresState(),savedBatch);assert.equal(Number((await isolated.query("SELECT count(*) AS n FROM auditoria_acceso WHERE accion='inventory.supplyFruitWithdrawalBatch'")).rows[0].n),batchAudits);
+    await assert.rejects(()=>mutatePostgres({...batch,items:[{supplyId:'fruta-0',quantity:3}]},salon));
+    await assert.rejects(()=>mutatePostgres({...batch,operationId:crypto.randomUUID()},salon),/cambiaron/);
+    const batchHistory=(await readOperationHistory(new URLSearchParams(),salon,state)).entries.find(e=>e.action==='supplyFruitWithdrawalBatch')!;
+    assert.equal(batchHistory.summary.items.length,2);assert.equal(batchHistory.summary.supplyMovementIds.length,2);assert.deepEqual(batchHistory.summary.responsibles,['Karla']);assert.equal(batchHistory.summary.shift!.id,shiftId);
+    const batchView=await inventoryForActor(state,salon);assert.equal(fruitWithdrawals(batchView,shiftId).length,2);
+    await isolated.query("ALTER TABLE movimientos_insumos ADD CONSTRAINT fallo_batch_fruta CHECK(NOT(retiro_fruta_id IS NOT NULL AND id_insumo='fruta-1' AND tipo='salida' AND cantidad=3))");
+    const retryBatch={...batch,revision:state.revision,operationId:crypto.randomUUID(),items:[{supplyId:'fruta-0',quantity:1},{supplyId:'fruta-1',quantity:3}]};
+    await assert.rejects(()=>mutatePostgres(retryBatch,salon));assert.deepEqual(await getPostgresState(),savedBatch);
+    await isolated.query('ALTER TABLE movimientos_insumos DROP CONSTRAINT fallo_batch_fruta');
+    state=await mutatePostgres(retryBatch,salon);assert.equal(stock(),7);assert.equal(stock('fruta-1'),6);
+    const batchRevision=state.revision;
+    const batchRaces=await Promise.allSettled([1,2].map(quantity=>mutatePostgres({...batch,revision:batchRevision,operationId:crypto.randomUUID(),items:[{supplyId:'fruta-2',quantity}]},salon)));
+    assert.equal(batchRaces.filter(r=>r.status==='fulfilled').length,1);state=await getPostgresState();
+    const allBatchRoots=fruitWithdrawals(state,shiftId);
+    for(const root of allBatchRoots)await run('supplyFruitWithdrawalCorrection',{shiftId,withdrawalId:root.id,withdrawalVersion:root.logs[0].id,supplyId:root.supplyId,cancel:true,responsible:'Shalu',reason:'Anular retiro individual de prueba'});
+    assert.equal(stock(),10);assert.equal(stock('fruta-1'),10);assert.equal(stock('fruta-2'),10);assert.deepEqual(validateBackup(state),state);
     const withdrawal={type:'supplyFruitWithdrawal',revision:state.revision,operationId:crypto.randomUUID(),shiftId,supplyId:'fruta-0',quantity:5,responsible:'Shalu'};
     state=await mutatePostgres(withdrawal,salon);assert.equal(stock(),5);
     const rootId=fruitWithdrawals(state)[0].id,original=structuredClone(fruitWithdrawals(state)[0].logs[0]);
@@ -96,7 +117,7 @@ async function main(){
     state=await mutatePostgres({...correction(0,'fruta-1'),cancel:true},admin);assert.equal(stock('fruta-1'),10);
     assert.equal(fruitWithdrawals(state,shiftId)[0].quantity,0);assert.deepEqual(validateBackup(state),state);
     assert.deepEqual(await getPostgresState(),state);
-    console.log('OK: migración repetible, retiros, compensaciones, anulación, concurrencia, historial, permisos, cierre, reintentos, lectura de Salón y rollback en PostgreSQL aislado.');
+    console.log('OK: migración repetible, retiros múltiples atómicos con auditoría y reintentos, compatibilidad individual, compensaciones, anulación, concurrencia, historial, permisos, cierre, reintentos, lectura de Salón y rollback en PostgreSQL aislado.');
   }finally{
     globals.lunePgPool=pool;await isolated?.end();
     try{if(created)await pool.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await pool.end();}

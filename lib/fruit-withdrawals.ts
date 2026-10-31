@@ -1,7 +1,7 @@
 import {shiftTeam,type Command,type State} from './inventory';
 import type {SupplyMovement} from './supplies';
 
-export const isFruitCommand=(type:string)=>type==='supplyFruitWithdrawal'||type==='supplyFruitWithdrawalCorrection';
+export const isFruitCommand=(type:string)=>type==='supplyFruitWithdrawalBatch'||type==='supplyFruitWithdrawal'||type==='supplyFruitWithdrawalCorrection';
 export type FruitWithdrawal={id:string;shiftId:string;supplyId:string;quantity:number;originalSupplyId:string;originalQuantity:number;responsible:string;at:string;logs:SupplyMovement[]};
 /** Derive the effective withdrawal from its immutable stock movements. */
 export function fruitWithdrawals(state:Pick<State,'supplyMovements'>,shiftId?:string):FruitWithdrawal[]{
@@ -17,6 +17,21 @@ export function fruitWithdrawals(state:Pick<State,'supplyMovements'>,shiftId?:st
 }
 export function executeFruitCommand(original:State,c:Command):State{
  if(c.revision!==original.revision)throw new Error('Los datos cambiaron. Actualiza la página y vuelve a intentar.');
+ if(c.type==='supplyFruitWithdrawalBatch'){
+  const count=original.supplies?.filter(i=>i.group==='Frutas congeladas').length??0;
+  if(!Array.isArray(c.items)||!c.items.length||c.items.length>count)throw new Error('Selecciona al menos una fruta y su cantidad.');
+  const seen=new Set<string>();
+  const items=c.items.map(value=>{
+   if(!value||typeof value!=='object')throw new Error('Retiro de fruta inválido.');
+   const row=value as Record<string,unknown>;
+   if(typeof row.supplyId!=='string'||!original.supplies?.some(i=>i.id===row.supplyId&&i.group==='Frutas congeladas')||seen.has(row.supplyId))throw new Error('Selecciona frutas válidas, sin repetir.');
+   if(typeof row.quantity!=='number'||!Number.isSafeInteger(row.quantity)||row.quantity<1||row.quantity>1_000_000_000)throw new Error('Porciones: ingresa una cantidad entera positiva válida.');
+   seen.add(row.supplyId);return {supplyId:row.supplyId,quantity:row.quantity};
+  });
+  let next=original;
+  for(const item of items)next=executeFruitCommand(next,{type:'supplyFruitWithdrawal',revision:next.revision,shiftId:c.shiftId,responsible:c.responsible,...item});
+  return {...next,revision:original.revision+1};
+ }
  const correction=c.type==='supplyFruitWithdrawalCorrection';
  const current=correction?fruitWithdrawals(original).find(w=>w.id===c.withdrawalId):undefined;
  if(correction&&!current)throw new Error('Selecciona un retiro de fruta válido.');

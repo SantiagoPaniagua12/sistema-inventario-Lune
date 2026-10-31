@@ -15,6 +15,7 @@ export const ACTIONS:Record<string,{label:string;kind:HistoryKind}>={
  correctLotDate:{label:'Fecha de producción corregida',kind:'Producción'},
  adjustReserve:{label:'Ajuste de reserva congelada',kind:'Producción'},
  produce:{label:'Producción registrada',kind:'Producción'},produceBatch:{label:'Producción de productos',kind:'Producción'},correctProduction:{label:'Corrección de producción',kind:'Producción'},
+ supplyFruitWithdrawalBatch:{label:'Retiro de varias frutas del turno',kind:'Insumos'},
  supplyFruitWithdrawal:{label:'Retiro de fruta del turno',kind:'Insumos'},supplyFruitWithdrawalCorrection:{label:'Corrección de retiro de fruta',kind:'Insumos'},
  supplyMove:{label:'Movimiento de insumo',kind:'Insumos'},supplyUpdate:{label:'Insumo actualizado',kind:'Insumos'},supplyCreate:{label:'Insumo creado',kind:'Insumos'},
  product:{label:'Producto actualizado',kind:'Catálogo'},createProduct:{label:'Producto creado',kind:'Catálogo'},excelImport:{label:'Importación histórica de Excel',kind:'Importaciones'},
@@ -28,7 +29,11 @@ export function operationSummary(before:State,after:State,command:Command):Opera
  const supplyIds=new Set(before.supplyMovements?.map(m=>m.id));
  const supplyLogs=after.supplyMovements?.filter(m=>!supplyIds.has(m.id))??[];
  let items:HistoryItem[]=[];
- if(isFruitCommand(command.type)){
+ if(command.type==='supplyFruitWithdrawalBatch'){
+   const ids=new Set(supplyLogs.map(m=>m.withdrawalId));
+   items=fruitWithdrawals(after).filter(w=>ids.has(w.id)).map(w=>({name:after.supplies?.find(i=>i.id===w.supplyId)?.name??'Fruta',quantity:w.quantity,unit:'porciones retiradas',before:0,after:w.quantity}));
+ }
+ else if(isFruitCommand(command.type)){
    const current=fruitWithdrawals(after).find(w=>w.id===(command.withdrawalId??supplyLogs[0]?.withdrawalId));
    const previous=fruitWithdrawals(before).find(w=>w.id===current?.id);
    if(current){

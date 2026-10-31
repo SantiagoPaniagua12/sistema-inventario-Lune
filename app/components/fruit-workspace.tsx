@@ -4,6 +4,7 @@ import {X} from 'lucide-react';
 import {shiftTeam,type State} from '@/lib/inventory';
 import type {Actor} from '@/lib/access';
 import {fruitWithdrawals} from '@/lib/fruit-withdrawals';
+import {FruitBatchWithdrawalDialog} from './fruit-batch-dialog';
 import {ManualCountInput} from './manual-count-input';
 
 type Props={actor:Actor;state:State;busy:boolean;error:string;historical?:boolean;onCommand:(data:Record<string,unknown>,message:string)=>Promise<boolean|undefined>};
@@ -12,17 +13,19 @@ type Form={supplyId:string;withdrawalId?:string;cancel?:boolean};
 export function FruitWorkspace({actor,state,busy,error,historical=false,onCommand}:Props){
  const [historyShift,setHistoryShift]=useState(state.shifts.at(-1)?.id??'');
  const [form,setForm]=useState<Form|null>(null);
+ const [batchShiftId,setBatchShiftId]=useState<string|null>(null);
  const shift=historical?state.shifts.find(s=>s.id===historyShift):state.shifts.find(s=>s.status==='open');
  const fruits=state.supplies?.filter(i=>i.group==='Frutas congeladas')??[];
  const withdrawals=shift?fruitWithdrawals(state,shift.id):[];
  const canCorrect=!!shift&&(shift.status==='open'||actor.role==='admin');
  if(actor.role==='cocina')return null;
  return <section className="panel fruit-workspace" aria-label={historical?'Retiros de fruta por turno':'Frutas congeladas'}>
-  <div className="panel-heading"><div><h2>{historical?'Retiros de fruta por turno':'Frutas congeladas'}</h2><p>Registra las porciones que retiras. El stock se descuenta al guardar.</p></div></div>
+  <div className="panel-heading"><div><h2>{historical?'Retiros de fruta por turno':'Frutas congeladas'}</h2><p>Registra las porciones de varias frutas en un solo formulario. El stock se descuenta al guardar.</p></div>{!historical&&<button className="primary" disabled={busy||!shift||!fruits.some(f=>f.active!==false&&!f.mergedInto&&(f.stock??0)>0)} onClick={()=>setBatchShiftId(shift?.id??null)}>Registrar retiros</button>}</div>
   {historical&&<div className="fruit-toolbar"><label>Turno de frutas<select value={historyShift} disabled={busy} onChange={e=>{setHistoryShift(e.target.value);setForm(null);}}><option value="">Selecciona un turno</option>{state.shifts.toReversed().map(s=><option key={s.id} value={s.id}>{s.date} · {s.period} · {s.status==='open'?'Abierto':'Cerrado'}</option>)}</select></label></div>}
   {!historical&&!shift&&<p className="fruit-note" role="status">Abre un turno para registrar retiros de fruta.</p>}
-  {!historical&&<div className="table-wrap" role="region" aria-label="Existencias de fruta congelada" tabIndex={0}><table><thead><tr><th>FRUTA</th><th>DISPONIBLES</th><th>RETIRADAS EN EL TURNO</th><th>ACCIONES</th></tr></thead><tbody>{fruits.filter(i=>i.active!==false||(i.stock??0)>0).map(f=><tr key={f.id}><td><strong>{f.name}</strong></td><td>{f.stock===null?'Sin conteo inicial':`${f.stock} porciones`}</td><td>{withdrawals.filter(w=>w.supplyId===f.id).reduce((n,w)=>n+w.quantity,0)} porciones</td><td><button className="text-button" disabled={busy||!shift||f.stock===null||f.stock===0||f.active===false} onClick={()=>setForm({supplyId:f.id})}>Registrar retiro<span className="sr-only"> de {f.name}</span></button></td></tr>)}</tbody></table>{!fruits.length&&<p className="empty">No hay frutas registradas.</p>}</div>}
+  {!historical&&<div className="table-wrap" role="region" aria-label="Existencias de fruta congelada" tabIndex={0}><table><thead><tr><th>FRUTA</th><th>DISPONIBLES</th><th>RETIRADAS EN EL TURNO</th></tr></thead><tbody>{fruits.filter(i=>i.active!==false||(i.stock??0)>0).map(f=><tr key={f.id}><td><strong>{f.name}</strong></td><td>{f.stock===null?'Sin conteo inicial':`${f.stock} porciones`}</td><td>{withdrawals.filter(w=>w.supplyId===f.id).reduce((n,w)=>n+w.quantity,0)} porciones</td></tr>)}</tbody></table>{!fruits.length&&<p className="empty">No hay frutas registradas.</p>}</div>}
   <div className="fruit-log"><h3>{historical?'Retiros registrados':'Retiros del turno'}</h3>{withdrawals.length?<div className="table-wrap" role="region" aria-label="Retiros de fruta" tabIndex={0}><table><thead><tr><th>HORA</th><th>FRUTA</th><th>PORCIONES</th><th>RESPONSABLE</th><th>ACCIONES</th></tr></thead><tbody>{withdrawals.map(w=><tr key={w.id}><td>{localTime(w.at)}</td><td>{fruits.find(f=>f.id===w.supplyId)?.name??'Fruta'}<small>{w.quantity===0?'Anulado':w.logs.length>1?'Corregido':''}</small></td><td>{w.quantity}</td><td>{w.responsible}</td><td><div className="actions"><button className="text-button" disabled={busy||!canCorrect} onClick={()=>setForm({supplyId:w.supplyId,withdrawalId:w.id})}>Corregir</button><button className="text-button" disabled={busy||!canCorrect||w.quantity===0} onClick={()=>setForm({supplyId:w.supplyId,withdrawalId:w.id,cancel:true})}>Anular</button></div><details className="fruit-details"><summary>Ver historial</summary>{w.logs.toReversed().map(m=><p key={m.id}>{localTime(m.at)} · {m.responsible}<br/>{fruits.find(f=>f.id===m.supplyId)?.name}: {m.action==='entrada'?'+':'−'}{m.quantity} porciones · Stock: {m.before} → {m.after}<br/>{m.note}</p>)}</details></td></tr>)}</tbody></table></div>:<p className="fruit-note">No hay retiros de fruta en este turno.</p>}</div>
+  {batchShiftId&&<FruitBatchWithdrawalDialog state={state} shiftId={batchShiftId} busy={busy} serverError={error} onSave={onCommand} onClose={()=>setBatchShiftId(null)}/>}
   {form&&shift&&<FruitWithdrawalDialog key={`${form.withdrawalId??form.supplyId}-${form.cancel??false}`} actor={actor} state={state} shiftId={shift.id} form={form} busy={busy} serverError={error} onSave={onCommand} onClose={()=>setForm(null)}/>}
  </section>;
 }
